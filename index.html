@@ -359,7 +359,15 @@ function renderNav() {
   ).join('');
 }
 function toTop() { const m = document.getElementById('main'); if (m) m.scrollTop = 0; }
-function go(tab) { state.tab = tab; render(); toTop(); }
+// 入力タブの状態を初期値に戻す（タブを離れたときに呼ぶ）
+function resetInput() {
+  state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null;
+  state.kind = 'exp'; state.date = todayIso();
+}
+function go(tab) {
+  if (state.tab === 'input' && tab !== 'input') resetInput();
+  state.tab = tab; render(); toTop();
+}
 
 function render() {
   renderNav();
