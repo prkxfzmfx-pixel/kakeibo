@@ -492,7 +492,6 @@ function render() {
 /* ================= 入力 ================= */
 function renderInput(main) {
   const cats = inputCatsOf(state.kind).slice();
-  const dayEntries = entriesOfDate(state.date);
   const editing = state.editId != null;
   const kindLabel = state.kind === 'exp' ? '支出' : '収入';
   // 入力タブ非表示のカテゴリでも、既存記録の編集中はタイルを出す（固定費で記帳した記録の修正用）
@@ -528,10 +527,6 @@ function renderInput(main) {
     </div>` : `<div class="hint">入力タブに表示するカテゴリがありません。設定 → カテゴリ管理で「入力タブで表示」へドラッグしてください。</div>`) + `
   <button class="bigsubmit" onclick="saveEntry()">${editing ? '更新する' : kindLabel + 'を入力する'}</button>`;
 
-  if (dayEntries.length) {
-    html += `<h2>${fmtIso(state.date)} の記録</h2><div class="card">` +
-      dayEntries.map(e => entryRowHtml(e)).join('') + `</div>`;
-  }
   main.innerHTML = html;
 
   // 金額入力用テンキー（金額ボックスをタップすると、mainとナビの間に表示）
