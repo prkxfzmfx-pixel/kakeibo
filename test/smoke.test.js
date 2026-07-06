@@ -128,11 +128,12 @@ assert(elements.main.innerHTML.includes('残り -¥200'), '超過時はマイナ
 A.setBudget(food.id, '40000');
 console.log('OK 予算タブ（合計・残り・未設定・超過）');
 
-// 9) 固定記帳: 住居費 ¥80,000 毎月1日 → 今月分が即記帳される
+// 9) 固定記帳: 住居費 ¥80,000 今月1日開始 → 今月分が即記帳される
 const rent = A.catsOf('exp').find(c => c.name === '住居費');
 elements.recCat = makeEl('recCat'); elements.recCat.value = rent.id;
 elements.recAmount = makeEl('recAmount'); elements.recAmount.value = '80000';
-elements.recDay = makeEl('recDay'); elements.recDay.value = '1';
+elements.recStart = makeEl('recStart'); elements.recStart.value = ym + '-01';
+elements.recEnd = makeEl('recEnd'); elements.recEnd.value = '';
 elements.recMemo = makeEl('recMemo'); elements.recMemo.value = '家賃';
 A.addRec();
 const rentEntries = A.store.entries.filter(e => e.recId);
@@ -150,7 +151,8 @@ const todayDay = Number(today.slice(8, 10));
 if (todayDay < 28) {
   elements.recCat.value = rent.id;
   elements.recAmount.value = '5000';
-  elements.recDay.value = String(todayDay + 1);
+  elements.recStart.value = `${ym}-${String(todayDay + 1).padStart(2, '0')}`;
+  elements.recEnd.value = '';
   elements.recMemo.value = '未来日テスト';
   A.addRec();
   assert(!A.store.entries.some(e => e.memo === '未来日テスト'), '未来日は未記帳');
@@ -188,10 +190,14 @@ console.log('OK CSVエクスポート内容');
 
 // 14) カテゴリ管理: 追加・リネーム・非表示・並べ替え
 elements.newCatName = makeEl('newCatName'); elements.newCatName.value = 'ペット';
+elements.newCatIcon = makeEl('newCatIcon'); elements.newCatIcon.value = '🎮';
+elements.newCatColor = makeEl('newCatColor'); elements.newCatColor.value = '#123456';
 A.setSetKind('exp');
 A.addCat();
 assert(A.catsOf('exp', true).some(c => c.name === 'ペット'), 'カテゴリ追加');
 const pet = A.catsOf('exp', true).find(c => c.name === 'ペット');
+assert.strictEqual(pet.icon, '🎮', '選んだアイコン');
+assert.strictEqual(pet.color, '#123456', '選んだ色');
 A.renameCat(pet.id, 'ペット費');
 assert.strictEqual(A.store.categories.find(c => c.id === pet.id).name, 'ペット費');
 A.toggleCat(pet.id);
@@ -233,22 +239,35 @@ assert(!elements.main.innerHTML.includes('月別内訳'), '月間モードに月
 assert(elements.main.innerHTML.includes('収支'), '月間モードのサマリカード');
 console.log('OK 年間レポート（月別内訳・年送り・月間との切替）');
 
-// 15a-2) 固定記帳の終了月（endYm）: 終了月までしか記帳されない
+// 15a-2) 固定記帳の開始日〜終了日: 期間内だけ記帳される（過去開始は遡って記帳）
 const beforeEnd = A.store.entries.length;
 A.store.recurring.push({
-  id: 'rEndTest', catId: A.catsOf('exp')[0].id, amount: 100, day: 1, memo: '終了テスト',
-  lastApplied: A.shiftYm(ym, -4), endYm: A.shiftYm(ym, -2),
+  id: 'rEndTest', catId: A.catsOf('exp')[0].id, amount: 100, memo: '終了テスト',
+  startDate: A.clampDateInYm(A.shiftYm(ym, -3), 1), endDate: A.clampDateInYm(A.shiftYm(ym, -2), 1), lastApplied: null,
 });
 A.applyRecurring();
 const endTestEntries = A.store.entries.filter(e => e.memo === '終了テスト');
-assert.strictEqual(endTestEntries.length, 2, '終了月まで2ヶ月分のみ記帳（-3月と-2月）');
-assert(endTestEntries.every(e => e.date.slice(0, 7) <= A.shiftYm(ym, -2)), '終了月以前のみ');
+assert.strictEqual(endTestEntries.length, 2, '開始月〜終了月の2ヶ月分のみ記帳');
+assert(endTestEntries.every(e => e.date.slice(0, 7) <= A.shiftYm(ym, -2)), '終了日以前のみ');
 A.applyRecurring();
 assert.strictEqual(A.store.entries.filter(e => e.memo === '終了テスト').length, 2, '再実行でも増えない');
 A.store.recurring = A.store.recurring.filter(r => r.id !== 'rEndTest');
 A.store.entries = A.store.entries.filter(e => e.memo !== '終了テスト');
 lsData['kakeibo.v1'] = JSON.stringify(A.store); // テスト後始末を永続化にも反映
-console.log('OK 固定記帳の終了月（endYm）');
+console.log('OK 固定記帳の開始日〜終了日');
+
+// 15a-3) 入力タブ: フォーム型UI・テンキーの開閉・アイコン
+A.go('input');
+let inHtml = elements.main.innerHTML;
+assert(inHtml.includes('支出を入力する'), '入力ボタン');
+assert(inHtml.includes('cicon'), 'カテゴリタイルにアイコン');
+assert(inHtml.includes('🍽️'), '食費アイコン');
+assert(!inHtml.includes('padwrap'), '初期状態でテンキー非表示');
+A.state.padOpen = true; A.render();
+assert(elements.main.innerHTML.includes('padwrap'), '金額タップでテンキー表示');
+A.state.padOpen = false; A.render();
+assert.strictEqual(A.catsOf('exp').find(c => c.name === '食費').icon, '🍽️', 'デフォルトアイコン補完');
+console.log('OK 入力タブ（フォーム型・テンキー開閉・アイコン）');
 
 // 15b) 入力タブを離れたら初期化される
 A.go('input');
@@ -273,6 +292,24 @@ assert.strictEqual(saved.recurring.length, A.store.recurring.length);
 eval(bootstrap.replace('__api', '__api2'));
 assert.strictEqual(globalThis.__api2.store.entries.length, saved.entries.length, '再ロード一致');
 console.log('OK 永続化・再ロード');
+
+// 16b) 旧形式データの移行（固定費day/endYm→startDate/endDate、アイコン補完）
+const savedAll = lsData['kakeibo.v1'];
+lsData['kakeibo.v1'] = JSON.stringify({
+  version: 1,
+  categories: [{ id: 'e0', name: '食費', kind: 'exp', color: '#2a78d6' }],
+  entries: [],
+  budgets: {},
+  recurring: [{ id: 'r1', catId: 'e0', amount: 500, day: 28, memo: 'x', lastApplied: '2026-06', endYm: '2027-01' }],
+});
+eval(bootstrap.replace('__api', '__api3'));
+const mig = globalThis.__api3.store;
+assert.strictEqual(mig.categories[0].icon, '🍽️', 'アイコン補完');
+assert.strictEqual(mig.recurring[0].startDate, '2026-06-28', 'day/lastApplied→startDate');
+assert.strictEqual(mig.recurring[0].endDate, '2027-01-28', 'endYm→endDate');
+assert(!('day' in mig.recurring[0]) && !('endYm' in mig.recurring[0]), '旧フィールド削除');
+lsData['kakeibo.v1'] = savedAll;
+console.log('OK 旧形式データの移行');
 
 // 17) クラウドバックアップ（fetchモック）
 (async () => {

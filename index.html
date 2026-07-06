@@ -124,31 +124,49 @@ nav button .ico { font-size: 20px; line-height: 1; }
 nav button.active { color: var(--accent); font-weight: 600; }
 
 /* 入力 */
-.daynav { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
-.daynav input[type="date"] { flex: 1; text-align: center; min-height: 40px; }
-.daynav button { min-width: 44px; min-height: 40px; }
 .kindtabs { display: flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 10px; }
 .kindtabs button { flex: 1; border: none; border-radius: 0; padding: 10px; color: var(--muted); background: var(--surface-1); font-weight: 600; }
 .kindtabs button.on-exp { background: var(--exp); color: #fff; }
 .kindtabs button.on-inc { background: var(--inc); color: #fff; }
+.editbar { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); margin-bottom: 8px; }
+.frow {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px 10px; margin-bottom: 8px; min-height: 50px;
+}
+.frow .flabel { width: 3.2em; color: var(--ink-2); font-size: 14px; flex-shrink: 0; }
+.frow input { flex: 1; border: none; background: none; padding: 6px 4px; min-width: 0; }
+.frow .dnav { min-width: 38px; border: none; background: none; color: var(--muted); }
+.amtbox {
+  flex: 1; display: flex; justify-content: flex-end; align-items: baseline; gap: 6px;
+  font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; padding: 2px 4px;
+}
+.amtbox .en { font-size: 14px; color: var(--ink-2); font-weight: 400; }
 .catgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .catgrid button {
-  min-height: 48px; font-size: 14px; display: flex; align-items: center; gap: 6px; justify-content: center;
-  padding: 6px 4px; overflow: hidden;
+  min-height: 74px; font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 4px; justify-content: center;
+  padding: 8px 4px; overflow: hidden;
 }
 .catgrid button.sel { outline: 2px solid var(--accent); outline-offset: -2px; font-weight: 700; }
+.cicon { font-size: 24px; line-height: 1; }
+.eicon { font-size: 18px; width: 26px; text-align: center; flex-shrink: 0; }
 .cdot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.amtdisp {
-  font-size: 32px; text-align: right; padding: 8px 12px; margin: 10px 0 6px;
-  background: var(--page); border: 1px solid var(--border); border-radius: 10px;
-  font-variant-numeric: tabular-nums; min-height: 54px;
+.bigsubmit {
+  width: 100%; min-height: 52px; font-size: 17px; font-weight: 700;
+  background: var(--accent); color: #fff; border: none; border-radius: 26px; margin: 14px 0 4px;
 }
-.pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+/* 金額テンキー（画面下部に重ねて表示） */
+.padwrap {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  background: var(--surface-1); border-top: 1px solid var(--border);
+  padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+  max-width: 640px; margin: 0 auto;
+  box-shadow: 0 -4px 16px rgba(0,0,0,.25);
+}
+.padhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; padding: 0 4px; }
+.pad { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .pad button { min-height: 52px; font-size: 20px; font-weight: 600; }
-.memoRow { display: flex; gap: 8px; margin: 10px 0; }
-.memoRow input { flex: 1; }
-.saveRow { display: flex; gap: 8px; }
-.saveRow button { flex: 1; min-height: 48px; font-size: 16px; }
+.pad button.ok { background: var(--accent); color: #fff; border-color: transparent; }
 .entry-row { display: flex; align-items: center; gap: 8px; padding: 9px 2px; border-bottom: 1px solid var(--grid); cursor: pointer; }
 .entry-row:last-child { border-bottom: none; }
 .entry-row .cname { font-weight: 600; flex-shrink: 0; }
@@ -209,7 +227,10 @@ table.cal td .ci { color: var(--inc); }
 /* 設定 */
 .exrow { display: flex; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--grid); }
 .exrow:last-child { border-bottom: none; }
-.exrow input.nm { flex: 1; min-width: 0; }
+.exrow { flex-wrap: wrap; }
+.exrow input.nm { flex: 1; min-width: 90px; }
+.icsel { width: 58px; padding: 6px 2px; font-size: 18px; flex-shrink: 0; }
+.colsel { width: 34px; height: 34px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--page); flex-shrink: 0; }
 .exrow input.bd { width: 90px; }
 .exrow button { padding: 6px 8px; font-size: 13px; }
 .exrow.hidden-cat input.nm { color: var(--muted); text-decoration: line-through; }
@@ -240,6 +261,14 @@ const COLOR_POOL = [
 ];
 const DEFAULT_EXP = ['食費', '日用品', '衣服・アクセサリー', '美容・健康・教育', '交際費', '光熱費', '交通費', '通信費', '住居費', 'ふるさと納税', 'ギャンブル', '臨時交際費', 'その他'];
 const DEFAULT_INC = ['給料', 'ポイント利用', 'ギャンブル', '賞与', '投資', '臨時収入', 'メルカリ', 'その他'];
+// カテゴリに選べるアイコン
+const ICONS = ['🍽️', '🍙', '☕', '🍰', '🛒', '🧴', '🧻', '👕', '👗', '👟', '💄', '💊', '📚', '🍻', '🥂', '🎁', '💡', '🚿', '🚃', '🚗', '✈️', '📱', '💻', '🏠', '🎰', '⚽', '🎮', '🎬', '🏋️', '🐷', '💰', '💴', '📈', '📦', '🅿️', '🎉', '✨', '❓'];
+const DEFAULT_CAT_ICONS = {
+  '食費': '🍽️', '日用品': '🧴', '衣服・アクセサリー': '👕', '美容・健康・教育': '💄', '交際費': '🍻',
+  '光熱費': '💡', '交通費': '🚃', '通信費': '📱', '住居費': '🏠', 'ふるさと納税': '🎁',
+  'ギャンブル': '🎰', '臨時交際費': '🥂', 'その他': '🐷',
+  '給料': '💰', 'ポイント利用': '🅿️', '賞与': '🎉', '投資': '📈', '臨時収入': '💴', 'メルカリ': '📦',
+};
 
 function defaultCategories() {
   const cats = [];
@@ -266,6 +295,21 @@ function normalize(s) {
   if (!s.budgets) s.budgets = {};
   if (!s.recurring) s.recurring = [];
   if (!s.version) s.version = 1;
+  // カテゴリにアイコンがなければ名前から補完
+  for (const c of s.categories) {
+    if (!c.icon) c.icon = DEFAULT_CAT_ICONS[c.name] || (c.kind === 'exp' ? '🐷' : '💰');
+  }
+  // 固定費: 旧形式（day/endYm）→ 新形式（startDate/endDate）へ移行
+  for (const r of s.recurring) {
+    if (!r.startDate) {
+      const day = r.day || 1;
+      const baseYm = r.lastApplied || todayIso().slice(0, 7);
+      r.startDate = clampDateInYm(baseYm, day);
+      r.endDate = r.endYm ? clampDateInYm(r.endYm, day) : null;
+      delete r.day;
+      delete r.endYm;
+    }
+  }
   return s;
 }
 function save() { localStorage.setItem(LS_KEY, JSON.stringify(store)); }
@@ -315,15 +359,19 @@ function sumBy(entries) {
 }
 
 /* ================= 固定費・固定収入の自動記帳 ================= */
+// 開始日から毎月同じ日（月末クランプ）に、当日以降アプリを開いたときに記帳する。
+// lastApplied=null なら開始月から。終了日を過ぎたら記帳しない
+function recDay(r) { return Number(r.startDate.slice(8, 10)); }
 function applyRecurring() {
   const today = todayIso();
   let added = 0;
   for (const r of store.recurring) {
-    if (r.paused) continue;
-    let ym = shiftYm(r.lastApplied, 1);
+    if (r.paused || !r.startDate) continue;
+    let ym = r.lastApplied ? shiftYm(r.lastApplied, 1) : r.startDate.slice(0, 7);
     while (true) {
-      if (r.endYm && ym > r.endYm) break; // 終了月を過ぎた固定費は記帳しない
-      const date = clampDateInYm(ym, r.day);
+      const date = clampDateInYm(ym, recDay(r));
+      if (date < r.startDate) { ym = shiftYm(ym, 1); continue; }
+      if (r.endDate && date > r.endDate) break;
       if (date > today) break;
       store.entries.push({ id: newId('n'), date, catId: r.catId, amount: r.amount, memo: r.memo || '', recId: r.id });
       r.lastApplied = ym;
@@ -334,6 +382,19 @@ function applyRecurring() {
   if (added) save();
   return added;
 }
+// 指定月に発生予定の固定費の合計（支出・収入別）。「来月の固定費」表示に使う
+function recurringForYm(ym) {
+  let exp = 0, inc = 0;
+  for (const r of store.recurring) {
+    if (r.paused || !r.startDate) continue;
+    const date = clampDateInYm(ym, recDay(r));
+    if (date < r.startDate) continue;
+    if (r.endDate && date > r.endDate) continue;
+    const c = catById(r.catId);
+    if (c && c.kind === 'inc') inc += r.amount; else exp += r.amount;
+  }
+  return { exp, inc };
+}
 
 /* ================= 画面状態 ================= */
 const state = {
@@ -343,6 +404,7 @@ const state = {
   selCat: null,
   amount: '',            // 入力中の金額（文字列）
   memo: '',
+  padOpen: false,        // 金額テンキーの表示状態
   editId: null,          // 編集中エントリid
   calYm: todayIso().slice(0, 7),
   calSel: todayIso(),
@@ -371,7 +433,7 @@ function toTop() { const m = document.getElementById('main'); if (m) m.scrollTop
 // 入力タブの状態を初期値に戻す（タブを離れたときに呼ぶ）
 function resetInput() {
   state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null;
-  state.kind = 'exp'; state.date = todayIso();
+  state.kind = 'exp'; state.date = todayIso(); state.padOpen = false;
 }
 function go(tab) {
   if (state.tab === 'input' && tab !== 'input') resetInput();
@@ -393,50 +455,63 @@ function renderInput(main) {
   const cats = catsOf(state.kind);
   const dayEntries = entriesOfDate(state.date);
   const editing = state.editId != null;
+  const kindLabel = state.kind === 'exp' ? '支出' : '収入';
 
   let html = `
-  <h1>${editing ? '記録を編集' : '入力'}</h1>
-  <div class="daynav">
-    <button onclick="chDate(-1)" aria-label="前日">◀</button>
-    <input type="date" value="${state.date}" onchange="setDate(this.value)">
-    <button onclick="chDate(1)" aria-label="翌日">▶</button>
-  </div>
-  <div class="kindtabs">
+  <div class="kindtabs" style="margin-top:10px">
     <button class="${state.kind === 'exp' ? 'on-exp' : ''}" onclick="setKind('exp')">支出</button>
     <button class="${state.kind === 'inc' ? 'on-inc' : ''}" onclick="setKind('inc')">収入</button>
   </div>
-  <div class="card">
-    <div class="catgrid">` +
+  ${editing ? `<div class="editbar">記録を編集中 <button class="ghost" onclick="cancelEdit()">キャンセル</button><button class="ghost danger" onclick="deleteEntry()">削除</button></div>` : ''}
+  <div class="frow">
+    <span class="flabel">日付</span>
+    <button class="dnav" onclick="chDate(-1)" aria-label="前日">◀</button>
+    <input type="date" value="${state.date}" onchange="setDate(this.value)">
+    <button class="dnav" onclick="chDate(1)" aria-label="翌日">▶</button>
+  </div>
+  <div class="frow">
+    <span class="flabel">メモ</span>
+    <input type="text" placeholder="未入力" value="${esc(state.memo)}" onchange="state.memo = this.value">
+  </div>
+  <div class="frow" onclick="openPad()">
+    <span class="flabel">${kindLabel}</span>
+    <div class="amtbox">${state.amount ? Number(state.amount).toLocaleString('ja-JP') : '<span style="color:var(--muted)">0</span>'}<span class="en">円</span></div>
+  </div>
+  <h2>カテゴリー</h2>
+  <div class="catgrid">` +
     cats.map(c => `<button class="${state.selCat === c.id ? 'sel' : ''}" onclick="selectCat('${c.id}')">
-      <span class="cdot" style="background:${c.color}"></span>${esc(c.name)}</button>`).join('') + `
-    </div>
-    <div class="amtdisp">${state.amount ? yen(Number(state.amount)) : '<span style="color:var(--muted)">¥0</span>'}</div>
-    <div class="pad">
-      ${[7, 8, 9, 4, 5, 6, 1, 2, 3].map(n => `<button onclick="pad('${n}')">${n}</button>`).join('')}
-      <button onclick="pad('00')">00</button>
-      <button onclick="pad('0')">0</button>
-      <button onclick="padBack()" aria-label="1文字削除">⌫</button>
-    </div>
-    <div class="memoRow">
-      <input type="text" placeholder="メモ（任意）" value="${esc(state.memo)}" onchange="state.memo = this.value">
-    </div>
-    <div class="saveRow">
-      ${editing ? `<button class="danger" onclick="deleteEntry()">削除</button><button class="ghost" onclick="cancelEdit()">キャンセル</button>` : ''}
-      <button class="primary" onclick="saveEntry()">${editing ? '更新' : '保存'}</button>
-    </div>
-  </div>`;
+      <span class="cicon">${esc(c.icon || '')}</span><span>${esc(c.name)}</span></button>`).join('') + `
+  </div>
+  <button class="bigsubmit" onclick="saveEntry()">${editing ? '更新する' : kindLabel + 'を入力する'}</button>`;
 
   if (dayEntries.length) {
     html += `<h2>${fmtIso(state.date)} の記録</h2><div class="card">` +
       dayEntries.map(e => entryRowHtml(e)).join('') + `</div>`;
   }
+
+  // 金額入力用テンキー（金額ボックスをタップすると表示）
+  if (state.padOpen) {
+    html += `
+    <div class="padwrap">
+      <div class="padhead">
+        <span class="num" style="font-size:20px;font-weight:700">${state.amount ? yen(Number(state.amount)) : '¥0'}</span>
+        <button class="ghost" onclick="closePad()">完了</button>
+      </div>
+      <div class="pad">
+        <button onclick="pad('7')">7</button><button onclick="pad('8')">8</button><button onclick="pad('9')">9</button><button onclick="padBack()">⌫</button>
+        <button onclick="pad('4')">4</button><button onclick="pad('5')">5</button><button onclick="pad('6')">6</button><button onclick="padClear()">AC</button>
+        <button onclick="pad('1')">1</button><button onclick="pad('2')">2</button><button onclick="pad('3')">3</button><button class="ok" onclick="closePad()">OK</button>
+        <button onclick="pad('0')">0</button><button onclick="pad('00')">00</button>
+      </div>
+    </div>`;
+  }
   main.innerHTML = html;
 }
 function entryRowHtml(e) {
-  const c = catById(e.catId) || { name: '?', color: '#888', kind: 'exp' };
+  const c = catById(e.catId) || { name: '?', color: '#888', kind: 'exp', icon: '❓' };
   const sign = c.kind === 'exp' ? '-' : '+';
   return `<div class="entry-row" onclick="openEntry('${e.id}')">
-    <span class="cdot" style="background:${c.color}"></span>
+    <span class="eicon">${esc(c.icon || '')}</span>
     <span class="cname">${esc(c.name)}</span>
     <span class="memo">${esc(e.memo || '')}</span>
     <span class="amt amt-${c.kind}">${sign}${yen(e.amount)}</span>
@@ -446,12 +521,15 @@ function setDate(v) { if (v) { state.date = v; render(); } }
 function chDate(n) { state.date = shiftDate(state.date, n); render(); }
 function setKind(k) { state.kind = k; state.selCat = null; render(); }
 function selectCat(id) { state.selCat = id; render(); }
+function openPad() { state.padOpen = true; render(); }
+function closePad() { state.padOpen = false; render(); }
 function pad(d) {
   if (state.amount.length >= 9) return;
   state.amount = (state.amount + d).replace(/^0+(?=\d)/, '');
   render();
 }
 function padBack() { state.amount = state.amount.slice(0, -1); render(); }
+function padClear() { state.amount = ''; render(); }
 function saveEntry() {
   const amount = Number(state.amount);
   if (!state.selCat) { alert('カテゴリを選んでください'); return; }
@@ -463,7 +541,7 @@ function saveEntry() {
   } else {
     store.entries.push({ id: newId('n'), date: state.date, catId: state.selCat, amount, memo: state.memo });
   }
-  state.amount = ''; state.memo = ''; state.selCat = null;
+  state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false;
   save(); render();
 }
 function openEntry(id) {
@@ -480,13 +558,13 @@ function openEntry(id) {
   render(); toTop();
 }
 function cancelEdit() {
-  state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null;
+  state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false;
   render();
 }
 function deleteEntry() {
   if (!confirm('この記録を削除しますか？')) return;
   store.entries = store.entries.filter(x => x.id !== state.editId);
-  state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null;
+  state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false;
   save(); render();
 }
 
@@ -771,28 +849,40 @@ function renderSettings(main) {
     </div>` +
     cats.map((c, i) => `
       <div class="exrow ${c.hidden ? 'hidden-cat' : ''}">
-        <span class="cdot" style="background:${c.color}"></span>
+        <select class="icsel" onchange="setCatIcon('${c.id}', this.value)">${ICONS.map(ic => `<option ${ic === c.icon ? 'selected' : ''}>${ic}</option>`).join('')}</select>
         <input type="text" class="nm" value="${esc(c.name)}" onchange="renameCat('${c.id}', this.value)">
+        <input type="color" class="colsel" value="${c.color}" onchange="setCatColor('${c.id}', this.value)" title="カテゴリ色">
         ${k === 'exp' ? `<input type="number" class="bd num" inputmode="numeric" placeholder="予算" value="${store.budgets[c.id] || ''}" onchange="setBudget('${c.id}', this.value)">` : ''}
         <button onclick="moveCat('${c.id}', -1)" ${i === 0 ? 'disabled' : ''}>↑</button>
         <button onclick="moveCat('${c.id}', 1)" ${i === cats.length - 1 ? 'disabled' : ''}>↓</button>
         <button onclick="toggleCat('${c.id}')">${c.hidden ? '表示' : '隠す'}</button>
       </div>`).join('') + `
     <div class="addrow">
+      <select id="newCatIcon" class="icsel">${ICONS.map(ic => `<option>${ic}</option>`).join('')}</select>
       <input type="text" id="newCatName" placeholder="新しいカテゴリ名" style="flex:1">
+      <input type="color" id="newCatColor" class="colsel" value="${COLOR_POOL[catsOf(k, true).length % COLOR_POOL.length]}" title="カテゴリ色">
       <button class="primary" onclick="addCat()">追加</button>
     </div>
-    <div class="hint">${k === 'exp' ? '「予算」は月あたりの金額（円）。空欄で予算なし。' : ''}「隠す」にすると入力画面から消えます（過去の記録はそのまま）。</div>
+    <div class="hint">アイコンと色は各行で変更できます。${k === 'exp' ? '「予算」は月あたりの金額（円）。空欄で予算なし。' : ''}「隠す」にすると入力画面から消えます（過去の記録はそのまま）。</div>
   </div>
 
   <h2>固定費・固定収入（毎月自動で記帳）</h2>
-  <div class="card">` +
+  <div class="card">
+    ${(() => {
+      const nextYm = shiftYm(todayIso().slice(0, 7), 1);
+      const next = recurringForYm(nextYm);
+      return `<div class="sumline" style="margin-bottom:8px">
+        <div><div class="lb">来月（${ymLabel(nextYm)}）の固定費</div><div class="v amt-exp">-${yen(next.exp)}</div></div>
+        <div><div class="lb">来月の固定収入</div><div class="v amt-inc">+${yen(next.inc)}</div></div>
+      </div>`;
+    })()}` +
     (store.recurring.length ? store.recurring.map(r => {
-      const c = catById(r.catId) || { name: '?', kind: 'exp' };
+      const c = catById(r.catId) || { name: '?', kind: 'exp', icon: '❓' };
+      const fmtD = d => { const [y, m, dd] = d.split('-').map(Number); return `${y}/${m}/${dd}`; };
       return `<div class="recrow ${r.paused ? 'paused' : ''}">
         <div class="detail">
-          毎月${r.day}日${r.endYm ? `（〜${r.endYm.replace('-', '/')}）` : ''}　${esc(c.name)}　<b class="num amt-${c.kind}">${yen(r.amount)}</b>
-          <div class="sub">${esc(r.memo || '')}${r.paused ? '（停止中）' : ''}</div>
+          ${esc(r.memo || c.name)}　<b class="num amt-${c.kind}">${yen(r.amount)}</b>
+          <div class="sub">${esc(c.icon || '')}${esc(c.name)}　毎月${recDay(r)}日　${fmtD(r.startDate)}〜${r.endDate ? fmtD(r.endDate) : 'なし'}${r.paused ? '（停止中）' : ''}</div>
         </div>
         <button onclick="toggleRec('${r.id}')">${r.paused ? '再開' : '停止'}</button>
         <button class="danger" onclick="delRec('${r.id}')">削除</button>
@@ -804,13 +894,16 @@ function renderSettings(main) {
           catsOf(kk).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('') + '</optgroup>').join('') + `
       </select>
       <input type="number" id="recAmount" inputmode="numeric" placeholder="金額" style="width:90px">
-      <select id="recDay">${Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${i + 1}日</option>`).join('')}</select>
+    </div>
+    <div class="addrow" style="align-items:center">
+      <label class="hint" style="margin:0">開始日 <input type="date" id="recStart" value="${todayIso()}"></label>
+      <label class="hint" style="margin:0">終了日 <input type="date" id="recEnd"></label>
     </div>
     <div class="addrow">
-      <input type="text" id="recMemo" placeholder="メモ（家賃 など）" style="flex:1">
+      <input type="text" id="recMemo" placeholder="タイトル（家賃 など）" style="flex:1">
       <button class="primary" onclick="addRec()">追加</button>
     </div>
-    <div class="hint">登録した日以降、アプリを開いたときに該当日を過ぎていれば自動で記帳されます（過去の月には遡りません）。31日など存在しない日は月末扱い。</div>
+    <div class="hint">開始日を初回として毎月同じ日に、当日以降アプリを開いたときに自動で記帳されます。終了日は空欄で無期限。開始日が過去の場合は過去分もまとめて記帳。31日など存在しない日は月末扱い。</div>
   </div>
 
   <h2>クラウド自動バックアップ</h2>
@@ -871,21 +964,28 @@ function moveCat(id, dir) {
   [arr[i], arr[j]] = [arr[j], arr[i]];
   save(); render();
 }
+function setCatIcon(id, v) { const c = catById(id); if (c) c.icon = v; save(); render(); }
+function setCatColor(id, v) { const c = catById(id); if (c && /^#[0-9a-fA-F]{6}$/.test(v)) c.color = v; save(); render(); }
 function addCat() {
   const name = document.getElementById('newCatName').value.trim();
   if (!name) return;
   const used = catsOf(state.setKind, true).length;
-  store.categories.push({ id: newId('c'), name, kind: state.setKind, color: COLOR_POOL[used % COLOR_POOL.length] });
+  const icon = document.getElementById('newCatIcon').value || (state.setKind === 'exp' ? '🐷' : '💰');
+  const colorV = document.getElementById('newCatColor').value;
+  const color = /^#[0-9a-fA-F]{6}$/.test(colorV) ? colorV : COLOR_POOL[used % COLOR_POOL.length];
+  store.categories.push({ id: newId('c'), name, kind: state.setKind, color, icon });
   save(); render();
 }
 function addRec() {
   const catId = document.getElementById('recCat').value;
   const amount = Math.round(Number(document.getElementById('recAmount').value));
-  const day = Number(document.getElementById('recDay').value);
+  const startDate = document.getElementById('recStart').value;
+  const endDate = document.getElementById('recEnd').value || null;
   const memo = document.getElementById('recMemo').value.trim();
   if (!catId || !amount || amount <= 0) { alert('カテゴリと金額を入力してください'); return; }
-  // 登録月の前月をlastAppliedにする → 今月分は日付が来ていれば即記帳
-  store.recurring.push({ id: newId('r'), catId, amount, day, memo, lastApplied: shiftYm(todayIso().slice(0, 7), -1) });
+  if (!startDate) { alert('開始日を入力してください'); return; }
+  if (endDate && endDate < startDate) { alert('終了日が開始日より前になっています'); return; }
+  store.recurring.push({ id: newId('r'), catId, amount, memo, startDate, endDate, lastApplied: null });
   applyRecurring();
   save(); render();
 }
