@@ -743,6 +743,11 @@ function renderSettings(main) {
     <div class="hint">登録した日以降、アプリを開いたときに該当日を過ぎていれば自動で記帳されます（過去の月には遡りません）。31日など存在しない日は月末扱い。</div>
   </div>
 
+  <h2>クラウド自動バックアップ</h2>
+  <div class="card setting-actions">
+    ${cloudSettingsHtml()}
+  </div>
+
   <h2>データ</h2>
   <div class="card setting-actions">
     <button onclick="exportCsv()">📄 CSVエクスポート（Excel用）</button>
@@ -821,6 +826,99 @@ function delRec(id) {
   save(); render();
 }
 
+/* ================= クラウド自動バックアップ ================= */
+// アプリを開いたとき1日1回、非公開GitHubリポジトリへ全データをアップロードする。
+// トークン（Fine-grained PAT）は端末のlocalStorageにのみ保存され、エクスポートにも含まれない
+const CLOUD_REPO = 'prkxfzmfx-pixel/app-backups';
+const CLOUD_FILE = 'kakeibo.json';
+const CLOUD_TOKEN_KEY = 'kakeibo.cloudToken';
+const CLOUD_META_KEY = 'kakeibo.cloudMeta';
+
+function cloudMeta() { try { return JSON.parse(localStorage.getItem(CLOUD_META_KEY) || '{}'); } catch (e) { return {}; } }
+function setCloudMeta(m) { localStorage.setItem(CLOUD_META_KEY, JSON.stringify(m)); }
+function b64utf8(s) {
+  const bytes = new TextEncoder().encode(s);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+function cloudApi() { return `https://api.github.com/repos/${CLOUD_REPO}/contents/${CLOUD_FILE}`; }
+function cloudHeaders(token) { return { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json' }; }
+
+async function cloudBackup(force) {
+  const token = localStorage.getItem(CLOUD_TOKEN_KEY);
+  if (!token) return { skipped: 'no-token' };
+  const today = todayIso();
+  if (!force && cloudMeta().last === today) return { skipped: 'done-today' };
+  try {
+    let sha;
+    const g = await fetch(cloudApi(), { headers: cloudHeaders(token) });
+    if (g.status === 200) sha = (await g.json()).sha;
+    const res = await fetch(cloudApi(), {
+      method: 'PUT',
+      headers: cloudHeaders(token),
+      body: JSON.stringify({ message: '自動バックアップ ' + today, content: b64utf8(JSON.stringify(store)), ...(sha ? { sha } : {}) }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    setCloudMeta({ last: today, ok: true });
+    if (state.tab === 'settings') render();
+    return { ok: true };
+  } catch (e) {
+    setCloudMeta({ ...cloudMeta(), ok: false, err: String(e && e.message || e) });
+    if (state.tab === 'settings') render();
+    return { error: String(e && e.message || e) };
+  }
+}
+function cloudSettingsHtml() {
+  const meta = cloudMeta();
+  const tokenSet = !!localStorage.getItem(CLOUD_TOKEN_KEY);
+  let status;
+  if (!tokenSet) status = '未設定（トークンを貼り付けると有効になります）';
+  else if (!meta.last) status = 'トークン設定済み・バックアップ未実行';
+  else status = `最終バックアップ: ${meta.last}` + (meta.ok === false ? `　⚠️前回エラー: ${esc(meta.err || '')}` : ' ✅');
+  return `
+    <div class="hint">アプリを開いたとき1日1回、非公開リポジトリ（${CLOUD_REPO}）へ自動バックアップします。過去の世代も履歴に残ります。</div>
+    <div style="font-size:13px">${status}</div>
+    <div class="addrow">
+      <input type="password" id="cloudToken" placeholder="${tokenSet ? '設定済み（変更時のみ入力）' : 'GitHubトークンを貼り付け'}" style="flex:1">
+      <button class="primary" onclick="saveCloudToken()">保存</button>
+    </div>
+    <button onclick="cloudBackupNow()">☁️ 今すぐバックアップ</button>
+    <button onclick="cloudRestore()">⬇️ クラウドから復元</button>
+    ${tokenSet ? '<button class="danger" onclick="clearCloudToken()">バックアップ停止（トークン削除）</button>' : ''}`;
+}
+function saveCloudToken() {
+  const v = document.getElementById('cloudToken').value.trim();
+  if (!v) { alert('トークンを入力してください'); return; }
+  localStorage.setItem(CLOUD_TOKEN_KEY, v);
+  cloudBackup(true).then(r => {
+    alert(r.ok ? '設定完了。バックアップに成功しました' : 'バックアップ失敗: ' + (r.error || '') + '\nトークンの権限（app-backupsリポのContents: Read and write）を確認してください');
+    render();
+  });
+}
+function clearCloudToken() {
+  if (!confirm('自動バックアップを停止しますか？（トークンを削除。クラウド上の既存バックアップは残ります）')) return;
+  localStorage.removeItem(CLOUD_TOKEN_KEY);
+  render();
+}
+function cloudBackupNow() {
+  cloudBackup(true).then(r => alert(r.ok ? 'バックアップ完了' : (r.skipped === 'no-token' ? 'トークンが未設定です' : 'バックアップ失敗: ' + (r.error || ''))));
+}
+async function cloudRestore() {
+  const token = localStorage.getItem(CLOUD_TOKEN_KEY);
+  if (!token) { alert('トークンが未設定です'); return; }
+  try {
+    const res = await fetch(cloudApi(), { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github.raw+json' } });
+    if (!res.ok) throw new Error(res.status === 404 ? 'クラウドにバックアップがまだありません' : 'HTTP ' + res.status);
+    const s = JSON.parse(await res.text());
+    if (!s || !Array.isArray(s.categories) || !Array.isArray(s.entries)) throw new Error('形式が違います');
+    if (!confirm(`クラウドのバックアップ（${s.entries.length}件）で現在のデータ（${store.entries.length}件）を置き換えます。よろしいですか？`)) return;
+    store = normalize(s);
+    save(); render();
+    alert('復元完了');
+  } catch (e) { alert('復元失敗: ' + (e && e.message || e)); }
+}
+
 /* ================= データ入出力 ================= */
 function buildCsv() {
   const head = '日付,種別,カテゴリ,金額,メモ';
@@ -892,6 +990,9 @@ window.addEventListener('orientationchange', fitViewport);
 fitViewport();
 applyRecurring();
 render();
+cloudBackup();
+// アプリを閉じずに日をまたいで再表示したときもバックアップされるように
+document.addEventListener('visibilitychange', () => { if (!document.hidden) cloudBackup(); });
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js');
 }
