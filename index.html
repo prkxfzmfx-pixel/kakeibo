@@ -742,8 +742,27 @@ function renderSettings(main) {
     <button onclick="document.getElementById('importFile').click()">📥 バックアップをインポート（JSON）</button>
     <button class="danger" onclick="wipeAll()">🗑 すべてのデータを削除</button>
     <div class="hint">データはこの端末のブラウザ内にだけ保存されています。記録件数: ${store.entries.length}件。機種変更や別端末との共有はJSONのエクスポート→インポートで。</div>
+    <div class="hint" style="word-break:break-all">画面診断: ${esc(viewportDebug())}</div>
   </div>`;
   main.innerHTML = html;
+}
+// レイアウト不具合の調査用（設定タブ最下部に表示）
+function viewportDebug() {
+  try {
+    const de = document.documentElement;
+    const vv = window.visualViewport;
+    return [
+      'standalone=' + (navigator.standalone === true),
+      'inner=' + window.innerHeight,
+      'screen=' + screen.width + 'x' + screen.height,
+      'htmlClient=' + de.clientHeight,
+      'bodyOffset=' + document.body.offsetHeight,
+      'vv=' + (vv ? Math.round(vv.height) : '-'),
+      'appH=' + (de.style.getPropertyValue('--appH') || '-'),
+      'padTop=' + getComputedStyle(document.body).paddingTop,
+      'navPadB=' + getComputedStyle(document.getElementById('nav')).paddingBottom,
+    ].join(' ');
+  } catch (e) { return 'err:' + e.message; }
 }
 function setSetKind(k) { state.setKind = k; render(); }
 function renameCat(id, v) {
