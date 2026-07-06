@@ -41,7 +41,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
 ;globalThis.__api = {
   get store() { return store; },
   state, go, render, setDate, setKind, selectCat, pad, padBack, saveEntry, openEntry, deleteEntry, cancelEdit,
-  calSelect, chCalYm, chListYm, chRep, setRepMode, setRepKind, setSetKind,
+  calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind,
   renameCat, setBudget, toggleCat, moveCat, addCat, addRec, toggleRec, delRec,
   applyRecurring, buildCsv, catsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup,
 };})()`;
@@ -81,7 +81,7 @@ assert.deepStrictEqual(msum, { exp: 1200, inc: 280000, net: 278800 }, '月間収
 console.log('OK 収入入力と月間収支 (+278,800)');
 
 // 4) 各タブ描画
-for (const t of ['input', 'cal', 'list', 'report', 'settings']) {
+for (const t of ['input', 'cal', 'budget', 'report', 'settings']) {
   A.go(t);
   assert(elements.main.innerHTML.length > 100, t + ' 画面描画');
 }
@@ -93,33 +93,40 @@ assert(elements.main.innerHTML.includes('-1,200'), 'カレンダーに支出');
 assert(elements.main.innerHTML.includes('+280,000'), 'カレンダーに収入');
 console.log('OK カレンダーの日別合計表示');
 
-// 6) 一覧
-A.go('list');
-assert(elements.main.innerHTML.includes('食費'), '一覧にカテゴリ名');
-assert(elements.main.innerHTML.includes('スーパー'), '一覧にメモ');
-assert(elements.main.innerHTML.includes('¥280,000'), '一覧に金額');
-console.log('OK 一覧表示');
+// 6) カレンダー下部の月別明細（旧一覧タブ相当）
+assert(elements.main.innerHTML.includes(`id="day-${today}"`), '日付アンカー');
+assert(elements.main.innerHTML.includes('食費'), '明細にカテゴリ名');
+assert(elements.main.innerHTML.includes('スーパー'), '明細にメモ');
+assert(elements.main.innerHTML.includes('¥280,000'), '明細に金額');
+A.calSelect(today); // スクロール呼び出しがエラーにならないこと
+console.log('OK カレンダー下部の明細・日付タップ');
 
-// 7) レポート: ドーナツ+割合
+// 7) レポート: サマリカード+ドーナツ+割合
 A.go('report');
 assert(elements.main.innerHTML.includes('<svg'), 'ドーナツSVG');
 assert(elements.main.innerHTML.includes('100.0%'), '食費100%');
+assert(elements.main.innerHTML.includes('収支'), '収支サマリカード');
+assert(elements.main.innerHTML.includes('-¥1,200') || elements.main.innerHTML.includes('¥1,200'), '支出サマリ');
 A.setRepKind('inc');
 assert(elements.main.innerHTML.includes('給料'), '収入レポート');
 A.setRepKind('exp');
-console.log('OK レポート（支出/収入切替・割合）');
+console.log('OK レポート（サマリカード・支出/収入切替・割合）');
 
-// 8) 予算: 食費 40,000
+// 8) 予算タブ: 食費 40,000
 A.setBudget(food.id, '40000');
 assert.strictEqual(A.store.budgets[food.id], 40000);
-A.go('report');
-assert(elements.main.innerHTML.includes('¥1,200 / ¥40,000'), '予算バー表示');
+A.go('budget');
+let budHtml = elements.main.innerHTML;
+assert(budHtml.includes('予算合計'), '予算合計行');
+assert(budHtml.includes('残り ¥38,800'), '食費の残り 40000-1200');
+assert(budHtml.includes('予算 ¥40,000'), '予算表示');
+assert(budHtml.includes('未設定'), '未設定カテゴリ表示');
 // 超過ケース
 A.setBudget(food.id, '1000');
-A.go('report');
-assert(elements.main.innerHTML.includes('超過'), '予算超過表示');
+A.go('budget');
+assert(elements.main.innerHTML.includes('残り -¥200'), '超過時はマイナス表示');
 A.setBudget(food.id, '40000');
-console.log('OK カテゴリ別予算（通常・超過）');
+console.log('OK 予算タブ（合計・残り・未設定・超過）');
 
 // 9) 固定記帳: 住居費 ¥80,000 毎月1日 → 今月分が即記帳される
 const rent = A.catsOf('exp').find(c => c.name === '住居費');
@@ -199,12 +206,16 @@ assert.strictEqual(expCatsAfter[1], expCatsBefore[0]);
 assert.deepStrictEqual(A.catsOf('inc', true).map(c => c.id), A.store.categories.filter(c => c.kind === 'inc').map(c => c.id));
 console.log('OK カテゴリ管理（追加・リネーム・非表示・並べ替え）');
 
-// 15) 月ナビゲーション
-A.go('list');
-A.chListYm(-1);
-assert(elements.main.innerHTML.includes(A.shiftYm(ym, -1).split('-')[0] + '年'), '前月表示');
-A.chListYm(1);
-console.log('OK 月ナビゲーション');
+// 15) 月ナビゲーション（カレンダー・予算）
+A.go('cal');
+A.chCalYm(-1);
+assert(elements.main.innerHTML.includes(A.shiftYm(ym, -1).split('-')[0] + '年'), 'カレンダー前月表示');
+A.chCalYm(1);
+A.go('budget');
+A.chBudYm(-1);
+assert(elements.main.innerHTML.includes(A.shiftYm(ym, -1).split('-')[0] + '年'), '予算前月表示');
+A.chBudYm(1);
+console.log('OK 月ナビゲーション（カレンダー・予算）');
 
 // 15a-1) 年間レポート
 A.go('report');
@@ -218,7 +229,8 @@ A.chRep(-1);
 assert(elements.main.innerHTML.includes((Number(ym.slice(0, 4)) - 1) + '年'), '前年へ移動');
 A.chRep(1);
 A.setRepMode('month');
-assert(elements.main.innerHTML.includes('カテゴリ別予算') || elements.main.innerHTML.includes('予算'), '月間モードに予算セクション');
+assert(!elements.main.innerHTML.includes('月別内訳'), '月間モードに月別内訳は出ない');
+assert(elements.main.innerHTML.includes('収支'), '月間モードのサマリカード');
 console.log('OK 年間レポート（月別内訳・年送り・月間との切替）');
 
 // 15a-2) 固定記帳の終了月（endYm）: 終了月までしか記帳されない

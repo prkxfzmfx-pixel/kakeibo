@@ -185,8 +185,14 @@ table.cal td .ci { color: var(--inc); }
 .chips { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
 .chips button { padding: 6px 12px; font-size: 13px; border-radius: 16px; }
 .chips button.on { background: var(--accent); color: #fff; border-color: transparent; }
-.donutwrap { display: flex; align-items: center; gap: 10px; }
-.donutwrap svg { flex-shrink: 0; }
+.repsum { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.repsum .box {
+  flex: 1 1 40%; background: var(--page); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 10px; font-size: 13px; display: flex; justify-content: space-between; align-items: center;
+}
+.repsum .box b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.repsum .box.net { flex-basis: 100%; }
+.budget-sub { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
 .rep-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-bottom: 1px solid var(--grid); }
 .rep-row:last-child { border-bottom: none; }
 .rep-row .pct { color: var(--muted); font-size: 12px; width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -340,7 +346,7 @@ const state = {
   editId: null,          // 編集中エントリid
   calYm: todayIso().slice(0, 7),
   calSel: todayIso(),
-  listYm: todayIso().slice(0, 7),
+  budYm: todayIso().slice(0, 7),
   repYm: todayIso().slice(0, 7),
   repYear: Number(todayIso().slice(0, 4)),
   repMode: 'month',          // 'month' | 'year'
@@ -352,8 +358,8 @@ const state = {
 const TABS = [
   { id: 'input',    ico: '✏️', label: '入力' },
   { id: 'cal',      ico: '📅', label: 'カレンダー' },
-  { id: 'list',     ico: '📋', label: '一覧' },
   { id: 'report',   ico: '📊', label: 'レポート' },
+  { id: 'budget',   ico: '👛', label: '予算' },
   { id: 'settings', ico: '⚙️', label: '設定' },
 ];
 function renderNav() {
@@ -377,8 +383,8 @@ function render() {
   const main = document.getElementById('main');
   if (state.tab === 'input') renderInput(main);
   else if (state.tab === 'cal') renderCal(main);
-  else if (state.tab === 'list') renderList(main);
   else if (state.tab === 'report') renderReport(main);
+  else if (state.tab === 'budget') renderBudget(main);
   else renderSettings(main);
 }
 
@@ -520,7 +526,22 @@ function renderCal(main) {
     cells += row + '</tr>';
   }
 
-  const selEntries = entriesOfDate(state.calSel);
+  // 表示中の月の明細（日付降順、日ごとにグループ化）
+  const byDate = new Map();
+  for (const e of entriesOfYm(ym)) {
+    if (!byDate.has(e.date)) byDate.set(e.date, []);
+    byDate.get(e.date).push(e);
+  }
+  const days = [...byDate.keys()].sort().reverse();
+  let listHtml = '';
+  for (const d of days) {
+    const list = byDate.get(d);
+    const ds = sumBy(list);
+    listHtml += `<h2 id="day-${d}">${fmtIso(d)}　<span class="num ${ds.net < 0 ? 'amt-exp' : ''}" style="font-weight:400">${ds.net < 0 ? '-' : '+'}${yen(Math.abs(ds.net)).slice(1)}円</span></h2>
+      <div class="card">${list.map(e => entryRowHtml(e)).join('')}</div>`;
+  }
+  if (!days.length) listHtml = '<div class="empty">この月の記録はありません</div>';
+
   main.innerHTML = `
   <h1>カレンダー</h1>
   <div class="card">
@@ -529,62 +550,31 @@ function renderCal(main) {
       <span class="ym">${ymLabel(ym)}</span>
       <button onclick="chCalYm(1)" aria-label="翌月">▶</button>
     </div>
-    <div class="sumline" style="margin-bottom:8px">
-      <div><div class="lb">収入</div><div class="v amt-inc">${yen(msum.inc)}</div></div>
-      <div><div class="lb">支出</div><div class="v amt-exp">${yen(msum.exp)}</div></div>
-      <div><div class="lb">収支</div><div class="v num">${msum.net < 0 ? '-' : ''}${yen(Math.abs(msum.net))}</div></div>
-    </div>
     <table class="cal">
       <thead><tr>${WD.map(w => `<th>${w}</th>`).join('')}</tr></thead>
       <tbody>${cells}</tbody>
     </table>
-  </div>
-  <h2>${fmtIso(state.calSel)}</h2>
-  <div class="card">
-    ${selEntries.length ? selEntries.map(e => entryRowHtml(e)).join('') : '<div class="empty">記録なし</div>'}
-    <div style="margin-top:8px"><button class="ghost" onclick="inputAt('${state.calSel}')">＋ この日に入力</button></div>
-  </div>`;
-}
-function chCalYm(n) { state.calYm = shiftYm(state.calYm, n); render(); }
-function calSelect(iso) { state.calSel = iso; render(); }
-function inputAt(iso) { state.date = iso; state.tab = 'input'; state.editId = null; render(); toTop(); }
-
-/* ================= 一覧 ================= */
-function renderList(main) {
-  const ym = state.listYm;
-  const entries = entriesOfYm(ym);
-  const msum = sumBy(entries);
-  const byDay = new Map();
-  for (const e of entries) {
-    if (!byDay.has(e.date)) byDay.set(e.date, []);
-    byDay.get(e.date).push(e);
-  }
-  const days = [...byDay.keys()].sort().reverse();
-
-  let html = `<h1>一覧</h1>
-  <div class="card">
-    <div class="cal-head">
-      <button onclick="chListYm(-1)" aria-label="前月">◀</button>
-      <span class="ym">${ymLabel(ym)}</span>
-      <button onclick="chListYm(1)" aria-label="翌月">▶</button>
-    </div>
-    <div class="sumline">
+    <div class="sumline" style="margin-top:8px">
       <div><div class="lb">収入</div><div class="v amt-inc">${yen(msum.inc)}</div></div>
       <div><div class="lb">支出</div><div class="v amt-exp">${yen(msum.exp)}</div></div>
-      <div><div class="lb">収支</div><div class="v num">${msum.net < 0 ? '-' : ''}${yen(Math.abs(msum.net))}</div></div>
+      <div><div class="lb">合計</div><div class="v num ${msum.net < 0 ? 'amt-exp' : ''}">${msum.net < 0 ? '-' : ''}${yen(Math.abs(msum.net))}</div></div>
     </div>
-  </div>`;
-
-  if (!days.length) html += '<div class="empty">この月の記録はありません</div>';
-  for (const d of days) {
-    const list = byDay.get(d);
-    const ds = sumBy(list);
-    html += `<h2>${fmtIso(d)}　<span class="num" style="font-weight:400">${ds.net < 0 ? '-' : '+'}${yen(Math.abs(ds.net)).slice(1)}円</span></h2>
-      <div class="card">${list.map(e => entryRowHtml(e)).join('')}</div>`;
-  }
-  main.innerHTML = html;
+    <div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)">
+      選択日: ${fmtIso(state.calSel)}
+      <button class="ghost" style="padding:4px 8px" onclick="inputAt('${state.calSel}')">＋ この日に入力</button>
+    </div>
+  </div>
+  ${listHtml}`;
 }
-function chListYm(n) { state.listYm = shiftYm(state.listYm, n); render(); }
+function chCalYm(n) { state.calYm = shiftYm(state.calYm, n); render(); }
+function calSelect(iso) {
+  state.calSel = iso;
+  render();
+  // 下部の明細一覧のうち、選択した日のセクションへスクロール
+  const el = document.getElementById('day-' + iso);
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function inputAt(iso) { state.date = iso; state.tab = 'input'; state.editId = null; render(); toTop(); }
 
 /* ================= レポート ================= */
 function renderReport(main) {
@@ -610,16 +600,22 @@ function renderReport(main) {
     slices = rows.slice(0, 7).concat([{ cat: { name: 'その他まとめ', color: '#898781' }, amt: rest }]);
   }
 
+  const sums = sumBy(entriesAll);
   let html = `<h1>レポート</h1>
   <div class="card">
     <div class="chips">
-      <button class="${mode === 'month' ? 'on' : ''}" onclick="setRepMode('month')">月間</button>
-      <button class="${mode === 'year' ? 'on' : ''}" onclick="setRepMode('year')">年間</button>
+      <button class="${mode === 'month' ? 'on' : ''}" onclick="setRepMode('month')">月間レポート</button>
+      <button class="${mode === 'year' ? 'on' : ''}" onclick="setRepMode('year')">年間レポート</button>
     </div>
     <div class="cal-head">
       <button onclick="chRep(-1)" aria-label="前へ">◀</button>
       <span class="ym">${label}</span>
       <button onclick="chRep(1)" aria-label="次へ">▶</button>
+    </div>
+    <div class="repsum">
+      <div class="box"><span>支出</span><b class="amt-exp">-${yen(sums.exp)}</b></div>
+      <div class="box"><span>収入</span><b class="amt-inc">+${yen(sums.inc)}</b></div>
+      <div class="box net"><span>収支</span><b class="${sums.net < 0 ? 'amt-exp' : ''}">${sums.net < 0 ? '-' : ''}${yen(Math.abs(sums.net))}</b></div>
     </div>
     <div class="kindtabs">
       <button class="${kind === 'exp' ? 'on-exp' : ''}" onclick="setRepKind('exp')">支出</button>
@@ -629,13 +625,13 @@ function renderReport(main) {
   if (!total) {
     html += `<div class="empty">この${mode === 'month' ? '月' : '年'}の${kind === 'exp' ? '支出' : '収入'}はありません</div></div>`;
   } else {
-    html += `<div class="donutwrap">${donutSvg(slices, total, kind)}<div style="flex:1;min-width:0">` +
+    html += `<div style="display:flex;justify-content:center;padding:6px 0">${donutSvg(slices, total, kind)}</div>` +
       rows.map(r => `<div class="rep-row">
         <span class="cdot" style="background:${r.cat.color}"></span>
         <span>${esc(r.cat.name)}</span>
-        <span class="pct">${(r.amt / total * 100).toFixed(1)}%</span>
         <span class="amt">${yen(r.amt)}</span>
-      </div>`).join('') + `</div></div></div>`;
+        <span class="pct">${(r.amt / total * 100).toFixed(1)}%</span>
+      </div>`).join('') + `</div>`;
   }
 
   // 年間モード: 月別内訳（収入・支出・収支）
@@ -664,31 +660,6 @@ function renderReport(main) {
     html += `</div>`;
   }
 
-  // 予算（支出・月間のみ）
-  if (kind === 'exp' && mode === 'month') {
-    const budgetCats = catsOf('exp', true).filter(c => Number(store.budgets[c.id]) > 0);
-    html += `<h2>カテゴリ別予算</h2><div class="card">`;
-    if (!budgetCats.length) {
-      html += `<div class="empty">予算未設定。設定 → カテゴリ管理の「予算」欄で設定できます</div>`;
-    } else {
-      for (const c of budgetCats) {
-        const budget = Number(store.budgets[c.id]);
-        const spent = byCat.get(c.id) || 0;
-        const pct = Math.min(100, spent / budget * 100);
-        const over = spent > budget;
-        html += `<div class="budget-row">
-          <div class="budget-top">
-            <span class="cdot" style="background:${c.color}"></span>
-            <span>${esc(c.name)}</span>
-            ${over ? '<span style="color:var(--danger);font-size:12px;font-weight:700">超過</span>' : ''}
-            <span class="amt">${yen(spent)} / ${yen(budget)}</span>
-          </div>
-          <div class="bar"><i class="${over ? 'over' : ''}" style="width:${pct}%"></i></div>
-        </div>`;
-      }
-    }
-    html += `</div>`;
-  }
   main.innerHTML = html;
 }
 function chRep(n) {
@@ -700,13 +671,13 @@ function setRepMode(m) { state.repMode = m; render(); }
 function setRepKind(k) { state.repKind = k; render(); }
 
 function donutSvg(slices, total, kind) {
-  const size = 150, cx = 75, cy = 75, r = 58, w = 26;
+  const size = 260, cx = 130, cy = 130, r = 92, w = 52;
   let a0 = -Math.PI / 2;
-  let paths = '';
+  let paths = '', labels = '';
   for (const s of slices) {
     const frac = s.amt / total;
     const a1 = a0 + frac * Math.PI * 2;
-    // 2pxのサーフェス间隔（stroke）で区切る
+    // 2pxのサーフェス間隔（stroke）で区切る
     if (frac >= 0.999) {
       paths += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.cat.color}" stroke-width="${w}"/>`;
     } else {
@@ -718,14 +689,72 @@ function donutSvg(slices, total, kind) {
       // スライス境界の隙間
       paths += `<line x1="${cx}" y1="${cy}" x2="${(cx + (r + w) * Math.cos(a1)).toFixed(2)}" y2="${(cy + (r + w) * Math.sin(a1)).toFixed(2)}" stroke="var(--surface-1)" stroke-width="2"/>`;
     }
+    // 大きいスライスにはカテゴリ名を直接ラベル表示
+    if (frac >= 0.13) {
+      const mid = (a0 + a1) / 2;
+      const lx = cx + r * Math.cos(mid), ly = cy + r * Math.sin(mid);
+      labels += `<text x="${lx.toFixed(1)}" y="${(ly + 4).toFixed(1)}" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">${esc(s.cat.name)}</text>`;
+    }
     a0 = a1;
   }
-  return `<svg width="150" height="150" viewBox="0 0 ${size} ${size}" role="img" aria-label="カテゴリ別割合">
-    ${paths}
-    <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="11" fill="var(--muted)">${kind === 'exp' ? '支出' : '収入'}</text>
-    <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink-1)" style="font-variant-numeric:tabular-nums">${yen(total)}</text>
+  return `<svg width="260" height="260" viewBox="0 0 ${size} ${size}" role="img" aria-label="カテゴリ別割合" style="max-width:100%">
+    ${paths}${labels}
+    <text x="${cx}" y="${cy - 6}" text-anchor="middle" font-size="13" fill="var(--muted)">${kind === 'exp' ? '支出' : '収入'}</text>
+    <text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="17" font-weight="700" fill="var(--ink-1)" style="font-variant-numeric:tabular-nums">${yen(total)}</text>
   </svg>`;
 }
+
+/* ================= 予算 ================= */
+function renderBudget(main) {
+  const ym = state.budYm;
+  const expEntries = entriesOfYm(ym).filter(e => kindOf(e) === 'exp');
+  const spentBy = new Map();
+  let totalSpent = 0;
+  for (const e of expEntries) {
+    spentBy.set(e.catId, (spentBy.get(e.catId) || 0) + e.amount);
+    totalSpent += e.amount;
+  }
+  const cats = catsOf('exp');
+  const totalBudget = store.categories.filter(c => c.kind === 'exp')
+    .reduce((a, c) => a + (Number(store.budgets[c.id]) || 0), 0);
+
+  function rowHtml(name, color, budget, spent) {
+    if (!budget && !spent) {
+      return `<div class="budget-row">
+        <div class="budget-top">${color ? `<span class="cdot" style="background:${color}"></span>` : ''}<span>${esc(name)}</span><span class="amt" style="color:var(--muted)">未設定</span></div>
+        <div class="bar"></div>
+        <div class="budget-sub"><span></span><span>-</span></div>
+      </div>`;
+    }
+    const remain = (budget || 0) - spent;
+    const pct = budget ? Math.min(100, spent / budget * 100) : (spent ? 100 : 0);
+    const pctLabel = budget ? Math.round(spent / budget * 100) + '%' : '100%';
+    return `<div class="budget-row">
+      <div class="budget-top">
+        ${color ? `<span class="cdot" style="background:${color}"></span>` : ''}<span>${esc(name)}</span>
+        <span class="amt ${remain < 0 ? 'amt-exp' : ''}">残り ${remain < 0 ? '-' : ''}${yen(Math.abs(remain))}</span>
+      </div>
+      <div class="bar"><i style="width:${pct}%;${color ? 'background:' + color : ''}"></i></div>
+      <div class="budget-sub"><span>予算 ${budget ? yen(budget) : '未設定'}　支出 ${yen(spent)}</span><span>${pctLabel}</span></div>
+    </div>`;
+  }
+
+  main.innerHTML = `
+  <h1>予算</h1>
+  <div class="card">
+    <div class="cal-head">
+      <button onclick="chBudYm(-1)" aria-label="前月">◀</button>
+      <span class="ym">${ymLabel(ym)}</span>
+      <button onclick="chBudYm(1)" aria-label="翌月">▶</button>
+    </div>
+    ${rowHtml('予算合計', null, totalBudget, totalSpent)}
+  </div>
+  <div class="card">
+    ${cats.map(c => rowHtml(c.name, c.color, Number(store.budgets[c.id]) || 0, spentBy.get(c.id) || 0)).join('')}
+    <div class="hint">予算の金額は 設定 → カテゴリ管理 の「予算」欄で変更できます。</div>
+  </div>`;
+}
+function chBudYm(n) { state.budYm = shiftYm(state.budYm, n); render(); }
 
 /* ================= 設定 ================= */
 function renderSettings(main) {
