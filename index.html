@@ -848,12 +848,20 @@ function wipeAll() {
 // 実測の画面高さをCSS変数に渡す（iOSスタンドアロンのdvh過少計算対策）。
 // env(safe-area-inset-top)が効かない場合はステータスバー分をフォールバック確保
 function fitViewport() {
-  if (window.innerHeight) document.documentElement.style.setProperty('--appH', window.innerHeight + 'px');
+  let h = window.innerHeight;
+  if (navigator.standalone && window.screen) {
+    // ホーム画面起動時はinnerHeightがステータスバー分小さく報告されるため、
+    // 端末の物理画面高を使う（screen.width/heightはiOSでは向きによらず縦基準で固定）
+    const portrait = !window.matchMedia || window.matchMedia('(orientation: portrait)').matches;
+    h = portrait ? screen.height : screen.width;
+  }
+  if (h) document.documentElement.style.setProperty('--appH', h + 'px');
   if (navigator.standalone && parseFloat(getComputedStyle(document.body).paddingTop) < 20) {
     document.documentElement.style.setProperty('--safe-top', '59px');
   }
 }
 window.addEventListener('resize', fitViewport);
+window.addEventListener('orientationchange', fitViewport);
 fitViewport();
 applyRecurring();
 render();
