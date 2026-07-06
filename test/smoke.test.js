@@ -42,7 +42,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
   get store() { return store; },
   state, go, render, setDate, setKind, selectCat, pad, padBack, saveEntry, openEntry, deleteEntry, cancelEdit,
   calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind,
-  renameCat, setBudget, toggleCat, moveCat, addCat, addRec, toggleRec, delRec,
+  renameCat, setBudget, reorderCats, addCat, addRec, toggleRec, delRec,
   applyRecurring, buildCsv, catsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup,
 };})()`;
 eval(bootstrap);
@@ -200,17 +200,17 @@ assert.strictEqual(pet.icon, '🎮', '選んだアイコン');
 assert.strictEqual(pet.color, '#123456', '選んだ色');
 A.renameCat(pet.id, 'ペット費');
 assert.strictEqual(A.store.categories.find(c => c.id === pet.id).name, 'ペット費');
-A.toggleCat(pet.id);
-assert.strictEqual(A.store.categories.find(c => c.id === pet.id).hidden, true, '非表示');
-assert(!A.catsOf('exp').some(c => c.id === pet.id), '入力画面から消える');
+// 並び替え（ドラッグ&ドロップ確定時に呼ばれるreorderCats）
+const incBefore = A.catsOf('inc', true).map(c => c.id);
 const expCatsBefore = A.catsOf('exp', true).map(c => c.id);
-A.moveCat(expCatsBefore[1], -1);
-const expCatsAfter = A.catsOf('exp', true).map(c => c.id);
-assert.strictEqual(expCatsAfter[0], expCatsBefore[1], '並べ替え');
-assert.strictEqual(expCatsAfter[1], expCatsBefore[0]);
-// kindを跨いで並べ替えないこと
-assert.deepStrictEqual(A.catsOf('inc', true).map(c => c.id), A.store.categories.filter(c => c.kind === 'inc').map(c => c.id));
-console.log('OK カテゴリ管理（追加・リネーム・非表示・並べ替え）');
+const newOrder = [expCatsBefore[1], expCatsBefore[0], ...expCatsBefore.slice(2)];
+A.reorderCats('exp', newOrder);
+assert.deepStrictEqual(A.catsOf('exp', true).map(c => c.id), newOrder, '並べ替え反映');
+assert.deepStrictEqual(A.catsOf('inc', true).map(c => c.id), incBefore, '収入側は不変');
+// 不整合なids（欠け）は無視される
+A.reorderCats('exp', newOrder.slice(1));
+assert.deepStrictEqual(A.catsOf('exp', true).map(c => c.id), newOrder, '不正な並びは無視');
+console.log('OK カテゴリ管理（追加・リネーム・アイコン/色・並べ替え）');
 
 // 15) 月ナビゲーション（カレンダー・予算）
 A.go('cal');
@@ -262,10 +262,15 @@ let inHtml = elements.main.innerHTML;
 assert(inHtml.includes('支出を入力する'), '入力ボタン');
 assert(inHtml.includes('cicon'), 'カテゴリタイルにアイコン');
 assert(inHtml.includes('🍽️'), '食費アイコン');
-assert(!inHtml.includes('padwrap'), '初期状態でテンキー非表示');
+assert(!elements.padhost.innerHTML.includes('padwrap'), '初期状態でテンキー非表示');
 A.state.padOpen = true; A.render();
-assert(elements.main.innerHTML.includes('padwrap'), '金額タップでテンキー表示');
+assert(elements.padhost.innerHTML.includes('padwrap'), '金額タップでテンキー表示（padhost側）');
+assert(elements.padhost.innerHTML.includes('OK'), 'OKボタン');
 A.state.padOpen = false; A.render();
+assert(!elements.padhost.innerHTML.includes('padwrap'), '閉じると消える');
+A.go('cal');
+assert.strictEqual(elements.padhost.innerHTML, '', '他タブではテンキー領域が空');
+A.go('input');
 assert.strictEqual(A.catsOf('exp').find(c => c.name === '食費').icon, '🍽️', 'デフォルトアイコン補完');
 console.log('OK 入力タブ（フォーム型・テンキー開閉・アイコン）');
 

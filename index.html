@@ -155,12 +155,11 @@ nav button.active { color: var(--accent); font-weight: 600; }
   width: 100%; min-height: 52px; font-size: 17px; font-weight: 700;
   background: var(--accent); color: #fff; border: none; border-radius: 26px; margin: 14px 0 4px;
 }
-/* 金額テンキー（画面下部に重ねて表示） */
+/* 金額テンキー（mainとナビの間に挟まる通常要素。fixedは使わない） */
+#padhost { flex-shrink: 0; width: 100%; max-width: 640px; margin: 0 auto; }
 .padwrap {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
   background: var(--surface-1); border-top: 1px solid var(--border);
-  padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
-  max-width: 640px; margin: 0 auto;
+  padding: 8px 10px;
   box-shadow: 0 -4px 16px rgba(0,0,0,.25);
 }
 .padhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; padding: 0 4px; }
@@ -227,13 +226,13 @@ table.cal td .ci { color: var(--inc); }
 /* 設定 */
 .exrow { display: flex; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--grid); }
 .exrow:last-child { border-bottom: none; }
-.exrow { flex-wrap: wrap; }
-.exrow input.nm { flex: 1; min-width: 90px; }
-.icsel { width: 58px; padding: 6px 2px; font-size: 18px; flex-shrink: 0; }
+.exrow input.nm { flex: 1; min-width: 60px; }
+.icsel { width: 54px; padding: 6px 2px; font-size: 18px; flex-shrink: 0; }
 .colsel { width: 34px; height: 34px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--page); flex-shrink: 0; }
+.drag { cursor: grab; touch-action: none; padding: 8px 6px; color: var(--muted); font-size: 16px; flex-shrink: 0; user-select: none; -webkit-user-select: none; }
+.exrow.dragging { opacity: .55; background: var(--page); border-radius: 8px; }
 .exrow input.bd { width: 90px; }
 .exrow button { padding: 6px 8px; font-size: 13px; }
-.exrow.hidden-cat input.nm { color: var(--muted); text-decoration: line-through; }
 .addrow { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 .addrow input, .addrow select { min-width: 0; }
 .setting-actions { display: flex; flex-direction: column; gap: 8px; }
@@ -248,6 +247,7 @@ table.cal td .ci { color: var(--inc); }
 </head>
 <body>
 <main id="main"></main>
+<div id="padhost"></div>
 <nav id="nav"></nav>
 <input type="file" id="importFile" accept=".json,application/json" style="display:none">
 <script>
@@ -443,6 +443,8 @@ function go(tab) {
 function render() {
   renderNav();
   const main = document.getElementById('main');
+  // テンキーは入力タブ以外では常に閉じる
+  if (state.tab !== 'input') document.getElementById('padhost').innerHTML = '';
   if (state.tab === 'input') renderInput(main);
   else if (state.tab === 'cal') renderCal(main);
   else if (state.tab === 'report') renderReport(main);
@@ -488,10 +490,10 @@ function renderInput(main) {
     html += `<h2>${fmtIso(state.date)} の記録</h2><div class="card">` +
       dayEntries.map(e => entryRowHtml(e)).join('') + `</div>`;
   }
+  main.innerHTML = html;
 
-  // 金額入力用テンキー（金額ボックスをタップすると表示）
-  if (state.padOpen) {
-    html += `
+  // 金額入力用テンキー（金額ボックスをタップすると、mainとナビの間に表示）
+  document.getElementById('padhost').innerHTML = state.padOpen ? `
     <div class="padwrap">
       <div class="padhead">
         <span class="num" style="font-size:20px;font-weight:700">${state.amount ? yen(Number(state.amount)) : '¥0'}</span>
@@ -503,9 +505,7 @@ function renderInput(main) {
         <button onclick="pad('1')">1</button><button onclick="pad('2')">2</button><button onclick="pad('3')">3</button><button class="ok" onclick="closePad()">OK</button>
         <button onclick="pad('0')">0</button><button onclick="pad('00')">00</button>
       </div>
-    </div>`;
-  }
-  main.innerHTML = html;
+    </div>` : '';
 }
 function entryRowHtml(e) {
   const c = catById(e.catId) || { name: '?', color: '#888', kind: 'exp', icon: '❓' };
@@ -847,15 +847,13 @@ function renderSettings(main) {
       <button class="${k === 'exp' ? 'on-exp' : ''}" onclick="setSetKind('exp')">支出</button>
       <button class="${k === 'inc' ? 'on-inc' : ''}" onclick="setSetKind('inc')">収入</button>
     </div>` +
-    cats.map((c, i) => `
-      <div class="exrow ${c.hidden ? 'hidden-cat' : ''}">
+    cats.map(c => `
+      <div class="exrow" data-cid="${c.id}">
+        <span class="drag" onpointerdown="dragCat(event, '${c.id}')" title="ドラッグで並び替え">☰</span>
         <select class="icsel" onchange="setCatIcon('${c.id}', this.value)">${ICONS.map(ic => `<option ${ic === c.icon ? 'selected' : ''}>${ic}</option>`).join('')}</select>
         <input type="text" class="nm" value="${esc(c.name)}" onchange="renameCat('${c.id}', this.value)">
         <input type="color" class="colsel" value="${c.color}" onchange="setCatColor('${c.id}', this.value)" title="カテゴリ色">
         ${k === 'exp' ? `<input type="number" class="bd num" inputmode="numeric" placeholder="予算" value="${store.budgets[c.id] || ''}" onchange="setBudget('${c.id}', this.value)">` : ''}
-        <button onclick="moveCat('${c.id}', -1)" ${i === 0 ? 'disabled' : ''}>↑</button>
-        <button onclick="moveCat('${c.id}', 1)" ${i === cats.length - 1 ? 'disabled' : ''}>↓</button>
-        <button onclick="toggleCat('${c.id}')">${c.hidden ? '表示' : '隠す'}</button>
       </div>`).join('') + `
     <div class="addrow">
       <select id="newCatIcon" class="icsel">${ICONS.map(ic => `<option>${ic}</option>`).join('')}</select>
@@ -863,7 +861,7 @@ function renderSettings(main) {
       <input type="color" id="newCatColor" class="colsel" value="${COLOR_POOL[catsOf(k, true).length % COLOR_POOL.length]}" title="カテゴリ色">
       <button class="primary" onclick="addCat()">追加</button>
     </div>
-    <div class="hint">アイコンと色は各行で変更できます。${k === 'exp' ? '「予算」は月あたりの金額（円）。空欄で予算なし。' : ''}「隠す」にすると入力画面から消えます（過去の記録はそのまま）。</div>
+    <div class="hint">左の☰を押したままドラッグで並び替え。アイコンと色は各行で変更できます。${k === 'exp' ? '「予算」は月あたりの金額（円）。空欄で予算なし。' : ''}</div>
   </div>
 
   <h2>固定費・固定収入（毎月自動で記帳）</h2>
@@ -953,19 +951,45 @@ function setBudget(id, v) {
   else store.budgets[id] = Math.round(n);
   save(); render();
 }
-function toggleCat(id) { const c = catById(id); c.hidden = !c.hidden; save(); render(); }
-function moveCat(id, dir) {
-  const arr = store.categories;
-  const i = arr.findIndex(c => c.id === id);
-  // 同じkind内で隣を探す
-  let j = i + dir;
-  while (j >= 0 && j < arr.length && arr[j].kind !== arr[i].kind) j += dir;
-  if (j < 0 || j >= arr.length) return;
-  [arr[i], arr[j]] = [arr[j], arr[i]];
-  save(); render();
-}
 function setCatIcon(id, v) { const c = catById(id); if (c) c.icon = v; save(); render(); }
 function setCatColor(id, v) { const c = catById(id); if (c && /^#[0-9a-fA-F]{6}$/.test(v)) c.color = v; save(); render(); }
+// ドラッグ確定時に呼ばれる: 指定kindのカテゴリをids順に並び替える
+function reorderCats(kind, ids) {
+  const mine = ids.map(id => catById(id)).filter(c => c && c.kind === kind);
+  if (mine.length !== store.categories.filter(c => c.kind === kind).length) return; // 不整合なら何もしない
+  const others = store.categories.filter(c => c.kind !== kind);
+  store.categories = kind === 'exp' ? mine.concat(others) : others.concat(mine);
+  save(); render();
+}
+// ☰ハンドルの押下でドラッグ開始（ポインタイベント。iOSはtouch-action:noneでスクロールと分離）
+function dragCat(ev, id) {
+  ev.preventDefault();
+  const row = ev.target.closest('.exrow');
+  if (!row) return;
+  const container = row.parentNode;
+  row.classList.add('dragging');
+  const addRow = container.querySelector('.addrow');
+  const move = e => {
+    const y = e.clientY;
+    let before = null;
+    for (const r of container.querySelectorAll('.exrow')) {
+      if (r === row) continue;
+      const rc = r.getBoundingClientRect();
+      if (y < rc.top + rc.height / 2) { before = r; break; }
+    }
+    container.insertBefore(row, before || addRow);
+  };
+  const up = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', up);
+    row.classList.remove('dragging');
+    reorderCats(state.setKind, [...container.querySelectorAll('.exrow')].map(r => r.dataset.cid));
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+  document.addEventListener('pointercancel', up);
+}
 function addCat() {
   const name = document.getElementById('newCatName').value.trim();
   if (!name) return;
