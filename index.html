@@ -231,8 +231,15 @@ table.cal td .ci { color: var(--inc); }
 .colsel { width: 34px; height: 34px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--page); flex-shrink: 0; }
 .drag { cursor: grab; touch-action: none; padding: 8px 6px; color: var(--muted); font-size: 16px; flex-shrink: 0; user-select: none; -webkit-user-select: none; }
 .exrow.dragging { opacity: .55; background: var(--page); border-radius: 8px; }
-.exrow input.bd { width: 90px; }
 .exrow button { padding: 6px 8px; font-size: 13px; }
+.catsec { font-size: 12px; font-weight: 700; color: var(--muted); margin: 12px 0 2px; }
+/* 予算編集ビュー */
+.edithead { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 10px; }
+.edithead .ttl { font-size: 17px; font-weight: 700; }
+.budrow-edit { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--grid); }
+.budrow-edit:last-of-type { border-bottom: none; }
+.budrow-edit .cname { flex: 1; min-width: 0; }
+.budrow-edit input { width: 120px; text-align: right; }
 .addrow { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 .addrow input, .addrow select { min-width: 0; }
 .setting-actions { display: flex; flex-direction: column; gap: 8px; }
@@ -295,6 +302,20 @@ function normalize(s) {
   if (!s.budgets) s.budgets = {};
   if (!s.recurring) s.recurring = [];
   if (!s.version) s.version = 1;
+  // 予算: 旧形式（catId→金額の単一マップ）→ 新形式（'YYYY-MM'→{total,cats}の月別スナップショット）へ移行
+  {
+    const oldCats = {};
+    let hasOld = false;
+    for (const key of Object.keys(s.budgets)) {
+      if (!/^\d{4}-\d{2}$/.test(key)) { oldCats[key] = s.budgets[key]; delete s.budgets[key]; hasOld = true; }
+    }
+    if (hasOld) s.budgets[todayIso().slice(0, 7)] = { total: 0, cats: oldCats };
+    for (const key of Object.keys(s.budgets)) {
+      const b = s.budgets[key];
+      if (!b || typeof b !== 'object') s.budgets[key] = { total: Number(b) || 0, cats: {} };
+      else { if (!b.cats) b.cats = {}; b.total = Number(b.total) || 0; }
+    }
+  }
   // カテゴリにアイコンがなければ名前から補完
   for (const c of s.categories) {
     if (!c.icon) c.icon = DEFAULT_CAT_ICONS[c.name] || (c.kind === 'exp' ? '🐷' : '💰');
@@ -319,6 +340,18 @@ function catsOf(kind, includeHidden) {
   return store.categories.filter(c => c.kind === kind && (includeHidden || !c.hidden));
 }
 function newId(prefix) { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+// 入力タブのタイルに出すカテゴリ（noInput=trueは固定費専用などで手入力しない）
+function inputCatsOf(kind) { return catsOf(kind).filter(c => !c.noInput); }
+// 指定月に適用される予算: その月以前で最後に保存されたスナップショット。
+// 最初の設定より前の月には最初の設定を適用（=一度設定すれば全期間に効く）
+function budgetForYm(ym) {
+  const yms = Object.keys(store.budgets).sort();
+  if (!yms.length) return { total: 0, cats: {} };
+  let pick = yms[0];
+  for (const k of yms) if (k <= ym) pick = k;
+  const b = store.budgets[pick] || {};
+  return { total: Number(b.total) || 0, cats: b.cats || {} };
+}
 
 /* ================= ユーティリティ ================= */
 const WD = ['日', '月', '火', '水', '木', '金', '土'];
@@ -409,6 +442,9 @@ const state = {
   calYm: todayIso().slice(0, 7),
   calSel: todayIso(),
   budYm: todayIso().slice(0, 7),
+  budEdit: null,         // 予算編集ビューの対象月（null=通常表示）
+  budDraft: null,        // 予算編集ビューの下書き {total, cats}
+  budDirty: false,       // 予算下書きに未保存の変更があるか
   repYm: todayIso().slice(0, 7),
   repYear: Number(todayIso().slice(0, 4)),
   repMode: 'month',          // 'month' | 'year'
@@ -437,6 +473,7 @@ function resetInput() {
 }
 function go(tab) {
   if (state.tab === 'input' && tab !== 'input') resetInput();
+  if (state.tab === 'budget' && tab !== 'budget') { state.budEdit = null; state.budDraft = null; state.budDirty = false; }
   state.tab = tab; render(); toTop();
 }
 
@@ -454,10 +491,15 @@ function render() {
 
 /* ================= 入力 ================= */
 function renderInput(main) {
-  const cats = catsOf(state.kind);
+  const cats = inputCatsOf(state.kind).slice();
   const dayEntries = entriesOfDate(state.date);
   const editing = state.editId != null;
   const kindLabel = state.kind === 'exp' ? '支出' : '収入';
+  // 入力タブ非表示のカテゴリでも、既存記録の編集中はタイルを出す（固定費で記帳した記録の修正用）
+  if (editing && state.selCat) {
+    const c = catById(state.selCat);
+    if (c && c.kind === state.kind && !cats.includes(c)) cats.push(c);
+  }
 
   let html = `
   <div class="kindtabs" style="margin-top:10px">
@@ -479,11 +521,11 @@ function renderInput(main) {
     <span class="flabel">${kindLabel}</span>
     <div class="amtbox">${state.amount ? Number(state.amount).toLocaleString('ja-JP') : '<span style="color:var(--muted)">0</span>'}<span class="en">円</span></div>
   </div>
-  <h2>カテゴリー</h2>
-  <div class="catgrid">` +
-    cats.map(c => `<button class="${state.selCat === c.id ? 'sel' : ''}" onclick="selectCat('${c.id}')">
-      <span class="cicon">${esc(c.icon || '')}</span><span>${esc(c.name)}</span></button>`).join('') + `
-  </div>
+  <h2>カテゴリー</h2>` +
+    (cats.length ? `<div class="catgrid">` +
+      cats.map(c => `<button class="${state.selCat === c.id ? 'sel' : ''}" onclick="selectCat('${c.id}')">
+        <span class="cicon">${esc(c.icon || '')}</span><span>${esc(c.name)}</span></button>`).join('') + `
+    </div>` : `<div class="hint">入力タブに表示するカテゴリがありません。設定 → カテゴリ管理で「入力タブで表示」へドラッグしてください。</div>`) + `
   <button class="bigsubmit" onclick="saveEntry()">${editing ? '更新する' : kindLabel + 'を入力する'}</button>`;
 
   if (dayEntries.length) {
@@ -784,6 +826,7 @@ function donutSvg(slices, total, kind) {
 
 /* ================= 予算 ================= */
 function renderBudget(main) {
+  if (state.budEdit) { renderBudgetEdit(main); return; }
   const ym = state.budYm;
   const expEntries = entriesOfYm(ym).filter(e => kindOf(e) === 'exp');
   const spentBy = new Map();
@@ -793,8 +836,10 @@ function renderBudget(main) {
     totalSpent += e.amount;
   }
   const cats = catsOf('exp');
-  const totalBudget = store.categories.filter(c => c.kind === 'exp')
-    .reduce((a, c) => a + (Number(store.budgets[c.id]) || 0), 0);
+  const bud = budgetForYm(ym);
+  const catTotal = cats.reduce((a, c) => a + (Number(bud.cats[c.id]) || 0), 0);
+  // 予算合計が未設定ならカテゴリ予算の合計を使う
+  const totalBudget = bud.total || catTotal;
 
   function rowHtml(name, color, budget, spent) {
     if (!budget && !spent) {
@@ -826,19 +871,97 @@ function renderBudget(main) {
       <button onclick="chBudYm(1)" aria-label="翌月">▶</button>
     </div>
     ${rowHtml('予算合計', null, totalBudget, totalSpent)}
+    <button class="primary" style="width:100%;margin-top:10px" onclick="openBudgetEdit()">予算を設定</button>
   </div>
   <div class="card">
-    ${cats.map(c => rowHtml(c.name, c.color, Number(store.budgets[c.id]) || 0, spentBy.get(c.id) || 0)).join('')}
-    <div class="hint">予算の金額は 設定 → カテゴリ管理 の「予算」欄で変更できます。</div>
+    ${cats.map(c => rowHtml(c.name, c.color, Number(bud.cats[c.id]) || 0, spentBy.get(c.id) || 0)).join('')}
+    <div class="hint">「予算を設定」から月ごと・カテゴリごとに変更できます。保存した予算はその月から先の月にも引き継がれます。</div>
   </div>`;
 }
 function chBudYm(n) { state.budYm = shiftYm(state.budYm, n); render(); }
+
+/* ---- 予算編集ビュー（予算タブ内。月送り＋予算合計＋カテゴリ別を編集して保存） ---- */
+function renderBudgetEdit(main) {
+  const ym = state.budEdit;
+  const d = state.budDraft;
+  const cats = catsOf('exp');
+  const catTotal = cats.reduce((a, c) => a + (Number(d.cats[c.id]) || 0), 0);
+  main.innerHTML = `
+  <div class="edithead">
+    <button class="ghost" onclick="closeBudgetEdit()" aria-label="閉じる">✕</button>
+    <span class="ttl">予算設定</span>
+    <button class="primary" onclick="saveBudgetEdit()">保存</button>
+  </div>
+  <div class="card">
+    <div class="cal-head">
+      <button onclick="chBudEditYm(-1)" aria-label="前月">◀</button>
+      <span class="ym">${ymLabel(ym)}</span>
+      <button onclick="chBudEditYm(1)" aria-label="翌月">▶</button>
+    </div>
+    <div class="budrow-edit">
+      <span class="cname"><b>予算合計</b></span>
+      <input type="number" inputmode="numeric" placeholder="未設定" value="${d.total || ''}" onchange="setBudDraftTotal(this.value)">
+    </div>
+    <div class="hint">予算合計が未設定のときは、カテゴリー予算の合計（現在 ${yen(catTotal)}）を予算合計として表示します。</div>
+  </div>
+  <div class="card">` +
+    cats.map(c => `<div class="budrow-edit">
+      <span class="eicon">${esc(c.icon || '')}</span><span class="cname">${esc(c.name)}</span>
+      <input type="number" inputmode="numeric" placeholder="未設定" value="${d.cats[c.id] || ''}" onchange="setBudDraftCat('${c.id}', this.value)">
+    </div>`).join('') + `
+    <div class="hint">保存すると${ymLabel(ym)}から先の月に適用されます。先の月で別の予算を保存した場合は、その月からはそちらが優先されます。</div>
+  </div>`;
+}
+// 指定月の下書きを予算スナップショットから作り直して編集ビューを開く
+function loadBudDraft(ym) {
+  const b = budgetForYm(ym);
+  state.budEdit = ym;
+  state.budDraft = { total: b.total, cats: Object.assign({}, b.cats) };
+  state.budDirty = false;
+}
+function openBudgetEdit() { loadBudDraft(state.budYm); render(); }
+function chBudEditYm(n) {
+  if (state.budDirty && !confirm('保存していない変更があります。破棄して月を移動しますか？')) return;
+  loadBudDraft(shiftYm(state.budEdit, n)); render();
+}
+function closeBudgetEdit() {
+  if (state.budDirty && !confirm('保存していない変更を破棄しますか？')) return;
+  state.budEdit = null; state.budDraft = null; state.budDirty = false; render();
+}
+function setBudDraftTotal(v) {
+  const n = Math.round(Number(v));
+  state.budDraft.total = (Number.isFinite(n) && n > 0) ? n : 0;
+  state.budDirty = true;
+}
+function setBudDraftCat(id, v) {
+  const n = Math.round(Number(v));
+  if (Number.isFinite(n) && n > 0) state.budDraft.cats[id] = n;
+  else delete state.budDraft.cats[id];
+  state.budDirty = true;
+}
+function saveBudgetEdit() {
+  const ym = state.budEdit;
+  const cats = {};
+  for (const [id, v] of Object.entries(state.budDraft.cats)) if (Number(v) > 0) cats[id] = Math.round(Number(v));
+  store.budgets[ym] = { total: Math.max(0, Math.round(Number(state.budDraft.total) || 0)), cats };
+  state.budYm = ym;
+  state.budEdit = null; state.budDraft = null; state.budDirty = false;
+  save(); render(); toTop();
+}
 
 /* ================= 設定 ================= */
 function renderSettings(main) {
   const k = state.setKind;
   const cats = catsOf(k, true);
-  const allCats = store.categories.filter(c => !c.hidden);
+  const shown = cats.filter(c => !c.noInput);
+  const noInput = cats.filter(c => c.noInput);
+  const catRow = c => `
+      <div class="exrow" data-cid="${c.id}">
+        <span class="drag" onpointerdown="dragCat(event, '${c.id}')" title="ドラッグで並び替え">☰</span>
+        <select class="icsel" onchange="setCatIcon('${c.id}', this.value)">${ICONS.map(ic => `<option ${ic === c.icon ? 'selected' : ''}>${ic}</option>`).join('')}</select>
+        <input type="text" class="nm" value="${esc(c.name)}" onchange="renameCat('${c.id}', this.value)">
+        <input type="color" class="colsel" value="${c.color}" onchange="setCatColor('${c.id}', this.value)" title="カテゴリ色">
+      </div>`;
 
   let html = `<h1>設定</h1>
   <h2>カテゴリ管理</h2>
@@ -846,22 +969,18 @@ function renderSettings(main) {
     <div class="kindtabs">
       <button class="${k === 'exp' ? 'on-exp' : ''}" onclick="setSetKind('exp')">支出</button>
       <button class="${k === 'inc' ? 'on-inc' : ''}" onclick="setSetKind('inc')">収入</button>
-    </div>` +
-    cats.map(c => `
-      <div class="exrow" data-cid="${c.id}">
-        <span class="drag" onpointerdown="dragCat(event, '${c.id}')" title="ドラッグで並び替え">☰</span>
-        <select class="icsel" onchange="setCatIcon('${c.id}', this.value)">${ICONS.map(ic => `<option ${ic === c.icon ? 'selected' : ''}>${ic}</option>`).join('')}</select>
-        <input type="text" class="nm" value="${esc(c.name)}" onchange="renameCat('${c.id}', this.value)">
-        <input type="color" class="colsel" value="${c.color}" onchange="setCatColor('${c.id}', this.value)" title="カテゴリ色">
-        ${k === 'exp' ? `<input type="number" class="bd num" inputmode="numeric" placeholder="予算" value="${store.budgets[c.id] || ''}" onchange="setBudget('${c.id}', this.value)">` : ''}
-      </div>`).join('') + `
+    </div>
+    <div class="catsec">入力タブで表示</div>` +
+    (shown.map(catRow).join('') || '<div class="empty">なし</div>') + `
+    <div class="catsec catsec-noinput">入力タブで非表示（固定費専用など）</div>` +
+    (noInput.map(catRow).join('') || '<div class="empty">なし</div>') + `
     <div class="addrow">
       <select id="newCatIcon" class="icsel">${ICONS.map(ic => `<option>${ic}</option>`).join('')}</select>
       <input type="text" id="newCatName" placeholder="新しいカテゴリ名" style="flex:1">
       <input type="color" id="newCatColor" class="colsel" value="${COLOR_POOL[catsOf(k, true).length % COLOR_POOL.length]}" title="カテゴリ色">
       <button class="primary" onclick="addCat()">追加</button>
     </div>
-    <div class="hint">左の☰を押したままドラッグで並び替え。アイコンと色は各行で変更できます。${k === 'exp' ? '「予算」は月あたりの金額（円）。空欄で予算なし。' : ''}</div>
+    <div class="hint">左の☰を押したままドラッグで並び替え。「入力タブで非表示」の下へ移すと、入力タブのカテゴリタイルに出なくなります（固定費・予算・レポートでは引き続き使えます）。</div>
   </div>
 
   <h2>固定費・固定収入（毎月自動で記帳）</h2>
@@ -945,23 +1064,23 @@ function renameCat(id, v) {
   if (c && name) c.name = name;
   save(); render();
 }
-function setBudget(id, v) {
-  const n = Number(v);
-  if (v === '' || !Number.isFinite(n) || n <= 0) delete store.budgets[id];
-  else store.budgets[id] = Math.round(n);
-  save(); render();
-}
 function setCatIcon(id, v) { const c = catById(id); if (c) c.icon = v; save(); render(); }
 function setCatColor(id, v) { const c = catById(id); if (c && /^#[0-9a-fA-F]{6}$/.test(v)) c.color = v; save(); render(); }
-// ドラッグ確定時に呼ばれる: 指定kindのカテゴリをids順に並び替える
-function reorderCats(kind, ids) {
+// ドラッグ確定時に呼ばれる: 指定kindのカテゴリをids順に並び替え、
+// noInputIdsに入っているものを「入力タブで非表示」にする（省略時は表示設定を変えない）
+function reorderCats(kind, ids, noInputIds) {
   const mine = ids.map(id => catById(id)).filter(c => c && c.kind === kind);
   if (mine.length !== store.categories.filter(c => c.kind === kind).length) return; // 不整合なら何もしない
   const others = store.categories.filter(c => c.kind !== kind);
   store.categories = kind === 'exp' ? mine.concat(others) : others.concat(mine);
+  if (noInputIds) {
+    const hide = new Set(noInputIds);
+    for (const c of mine) { if (hide.has(c.id)) c.noInput = true; else delete c.noInput; }
+  }
   save(); render();
 }
 // ☰ハンドルの押下でドラッグ開始（ポインタイベント。iOSはtouch-action:noneでスクロールと分離）
+// 「入力タブで非表示」見出し（.catsec-noinput）を跨いでドロップでき、見出しより下の行が非表示になる
 function dragCat(ev, id) {
   ev.preventDefault();
   const row = ev.target.closest('.exrow');
@@ -969,10 +1088,11 @@ function dragCat(ev, id) {
   const container = row.parentNode;
   row.classList.add('dragging');
   const addRow = container.querySelector('.addrow');
+  const divider = container.querySelector('.catsec-noinput');
   const move = e => {
     const y = e.clientY;
     let before = null;
-    for (const r of container.querySelectorAll('.exrow')) {
+    for (const r of container.querySelectorAll('.exrow, .catsec-noinput')) {
       if (r === row) continue;
       const rc = r.getBoundingClientRect();
       if (y < rc.top + rc.height / 2) { before = r; break; }
@@ -984,7 +1104,17 @@ function dragCat(ev, id) {
     document.removeEventListener('pointerup', up);
     document.removeEventListener('pointercancel', up);
     row.classList.remove('dragging');
-    reorderCats(state.setKind, [...container.querySelectorAll('.exrow')].map(r => r.dataset.cid));
+    const ids = [];
+    const noInputIds = [];
+    let afterDivider = false;
+    for (const el of container.children) {
+      if (el === divider) { afterDivider = true; continue; }
+      if (el.classList && el.classList.contains('exrow')) {
+        ids.push(el.dataset.cid);
+        if (afterDivider) noInputIds.push(el.dataset.cid);
+      }
+    }
+    reorderCats(state.setKind, ids, noInputIds);
   };
   document.addEventListener('pointermove', move);
   document.addEventListener('pointerup', up);
