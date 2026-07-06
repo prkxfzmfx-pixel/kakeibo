@@ -41,7 +41,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
 ;globalThis.__api = {
   get store() { return store; },
   state, go, render, setDate, setKind, selectCat, pad, padBack, saveEntry, openEntry, deleteEntry, cancelEdit,
-  calSelect, chCalYm, chListYm, chRepYm, setRepKind, setSetKind,
+  calSelect, chCalYm, chListYm, chRep, setRepMode, setRepKind, setSetKind,
   renameCat, setBudget, toggleCat, moveCat, addCat, addRec, toggleRec, delRec,
   applyRecurring, buildCsv, catsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup,
 };})()`;
@@ -205,6 +205,38 @@ A.chListYm(-1);
 assert(elements.main.innerHTML.includes(A.shiftYm(ym, -1).split('-')[0] + '年'), '前月表示');
 A.chListYm(1);
 console.log('OK 月ナビゲーション');
+
+// 15a-1) 年間レポート
+A.go('report');
+A.setRepMode('year');
+let yearHtml = elements.main.innerHTML;
+assert(yearHtml.includes(ym.slice(0, 4) + '年'), '年見出し');
+assert(yearHtml.includes('月別内訳'), '月別内訳テーブル');
+assert(yearHtml.includes('合計'), '合計行');
+assert(yearHtml.includes('<svg'), '年間ドーナツ');
+A.chRep(-1);
+assert(elements.main.innerHTML.includes((Number(ym.slice(0, 4)) - 1) + '年'), '前年へ移動');
+A.chRep(1);
+A.setRepMode('month');
+assert(elements.main.innerHTML.includes('カテゴリ別予算') || elements.main.innerHTML.includes('予算'), '月間モードに予算セクション');
+console.log('OK 年間レポート（月別内訳・年送り・月間との切替）');
+
+// 15a-2) 固定記帳の終了月（endYm）: 終了月までしか記帳されない
+const beforeEnd = A.store.entries.length;
+A.store.recurring.push({
+  id: 'rEndTest', catId: A.catsOf('exp')[0].id, amount: 100, day: 1, memo: '終了テスト',
+  lastApplied: A.shiftYm(ym, -4), endYm: A.shiftYm(ym, -2),
+});
+A.applyRecurring();
+const endTestEntries = A.store.entries.filter(e => e.memo === '終了テスト');
+assert.strictEqual(endTestEntries.length, 2, '終了月まで2ヶ月分のみ記帳（-3月と-2月）');
+assert(endTestEntries.every(e => e.date.slice(0, 7) <= A.shiftYm(ym, -2)), '終了月以前のみ');
+A.applyRecurring();
+assert.strictEqual(A.store.entries.filter(e => e.memo === '終了テスト').length, 2, '再実行でも増えない');
+A.store.recurring = A.store.recurring.filter(r => r.id !== 'rEndTest');
+A.store.entries = A.store.entries.filter(e => e.memo !== '終了テスト');
+lsData['kakeibo.v1'] = JSON.stringify(A.store); // テスト後始末を永続化にも反映
+console.log('OK 固定記帳の終了月（endYm）');
 
 // 15b) 入力タブを離れたら初期化される
 A.go('input');

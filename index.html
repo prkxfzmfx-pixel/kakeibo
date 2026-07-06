@@ -316,6 +316,7 @@ function applyRecurring() {
     if (r.paused) continue;
     let ym = shiftYm(r.lastApplied, 1);
     while (true) {
+      if (r.endYm && ym > r.endYm) break; // 終了月を過ぎた固定費は記帳しない
       const date = clampDateInYm(ym, r.day);
       if (date > today) break;
       store.entries.push({ id: newId('n'), date, catId: r.catId, amount: r.amount, memo: r.memo || '', recId: r.id });
@@ -341,6 +342,8 @@ const state = {
   calSel: todayIso(),
   listYm: todayIso().slice(0, 7),
   repYm: todayIso().slice(0, 7),
+  repYear: Number(todayIso().slice(0, 4)),
+  repMode: 'month',          // 'month' | 'year'
   repKind: 'exp',
   setKind: 'exp',        // 設定画面のカテゴリタブ
 };
@@ -585,9 +588,12 @@ function chListYm(n) { state.listYm = shiftYm(state.listYm, n); render(); }
 
 /* ================= レポート ================= */
 function renderReport(main) {
-  const ym = state.repYm;
+  const mode = state.repMode;
   const kind = state.repKind;
-  const entries = entriesOfYm(ym).filter(e => kindOf(e) === kind);
+  const prefix = mode === 'month' ? state.repYm : state.repYear + '-';
+  const label = mode === 'month' ? ymLabel(state.repYm) : state.repYear + '年';
+  const entriesAll = store.entries.filter(e => e.date.startsWith(prefix));
+  const entries = entriesAll.filter(e => kindOf(e) === kind);
   const total = entries.reduce((a, e) => a + e.amount, 0);
 
   // カテゴリ別集計（降順）
@@ -606,10 +612,14 @@ function renderReport(main) {
 
   let html = `<h1>レポート</h1>
   <div class="card">
+    <div class="chips">
+      <button class="${mode === 'month' ? 'on' : ''}" onclick="setRepMode('month')">月間</button>
+      <button class="${mode === 'year' ? 'on' : ''}" onclick="setRepMode('year')">年間</button>
+    </div>
     <div class="cal-head">
-      <button onclick="chRepYm(-1)" aria-label="前月">◀</button>
-      <span class="ym">${ymLabel(ym)}</span>
-      <button onclick="chRepYm(1)" aria-label="翌月">▶</button>
+      <button onclick="chRep(-1)" aria-label="前へ">◀</button>
+      <span class="ym">${label}</span>
+      <button onclick="chRep(1)" aria-label="次へ">▶</button>
     </div>
     <div class="kindtabs">
       <button class="${kind === 'exp' ? 'on-exp' : ''}" onclick="setRepKind('exp')">支出</button>
@@ -617,7 +627,7 @@ function renderReport(main) {
     </div>`;
 
   if (!total) {
-    html += `<div class="empty">この月の${kind === 'exp' ? '支出' : '収入'}はありません</div></div>`;
+    html += `<div class="empty">この${mode === 'month' ? '月' : '年'}の${kind === 'exp' ? '支出' : '収入'}はありません</div></div>`;
   } else {
     html += `<div class="donutwrap">${donutSvg(slices, total, kind)}<div style="flex:1;min-width:0">` +
       rows.map(r => `<div class="rep-row">
@@ -628,8 +638,34 @@ function renderReport(main) {
       </div>`).join('') + `</div></div></div>`;
   }
 
-  // 予算（支出のみ）
-  if (kind === 'exp') {
+  // 年間モード: 月別内訳（収入・支出・収支）
+  if (mode === 'year') {
+    const months = new Map();
+    for (const e of entriesAll) {
+      const m = e.date.slice(5, 7);
+      if (!months.has(m)) months.set(m, { exp: 0, inc: 0 });
+      months.get(m)[kindOf(e)] += e.amount;
+    }
+    const mRows = [...months.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const ySum = sumBy(entriesAll);
+    html += `<h2>月別内訳</h2><div class="card" style="overflow-x:auto">`;
+    if (!mRows.length) {
+      html += '<div class="empty">この年の記録はありません</div>';
+    } else {
+      html += `<table class="sum">
+        <thead><tr><th>月</th><th>収入</th><th>支出</th><th>収支</th></tr></thead>
+        <tbody>` + mRows.map(([m, s]) => {
+          const net = s.inc - s.exp;
+          return `<tr><td>${Number(m)}月</td><td>${yen(s.inc)}</td><td>${yen(s.exp)}</td><td>${net < 0 ? '-' : ''}${yen(Math.abs(net))}</td></tr>`;
+        }).join('') + `
+        <tr><td><b>合計</b></td><td><b>${yen(ySum.inc)}</b></td><td><b>${yen(ySum.exp)}</b></td><td><b>${ySum.net < 0 ? '-' : ''}${yen(Math.abs(ySum.net))}</b></td></tr>
+        </tbody></table>`;
+    }
+    html += `</div>`;
+  }
+
+  // 予算（支出・月間のみ）
+  if (kind === 'exp' && mode === 'month') {
     const budgetCats = catsOf('exp', true).filter(c => Number(store.budgets[c.id]) > 0);
     html += `<h2>カテゴリ別予算</h2><div class="card">`;
     if (!budgetCats.length) {
@@ -655,7 +691,12 @@ function renderReport(main) {
   }
   main.innerHTML = html;
 }
-function chRepYm(n) { state.repYm = shiftYm(state.repYm, n); render(); }
+function chRep(n) {
+  if (state.repMode === 'month') state.repYm = shiftYm(state.repYm, n);
+  else state.repYear += n;
+  render();
+}
+function setRepMode(m) { state.repMode = m; render(); }
 function setRepKind(k) { state.repKind = k; render(); }
 
 function donutSvg(slices, total, kind) {
@@ -721,7 +762,7 @@ function renderSettings(main) {
       const c = catById(r.catId) || { name: '?', kind: 'exp' };
       return `<div class="recrow ${r.paused ? 'paused' : ''}">
         <div class="detail">
-          毎月${r.day}日　${esc(c.name)}　<b class="num amt-${c.kind}">${yen(r.amount)}</b>
+          毎月${r.day}日${r.endYm ? `（〜${r.endYm.replace('-', '/')}）` : ''}　${esc(c.name)}　<b class="num amt-${c.kind}">${yen(r.amount)}</b>
           <div class="sub">${esc(r.memo || '')}${r.paused ? '（停止中）' : ''}</div>
         </div>
         <button onclick="toggleRec('${r.id}')">${r.paused ? '再開' : '停止'}</button>
