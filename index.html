@@ -887,14 +887,34 @@ function cloudSettingsHtml() {
     <button onclick="cloudRestore()">⬇️ クラウドから復元</button>
     ${tokenSet ? '<button class="danger" onclick="clearCloudToken()">バックアップ停止（トークン削除）</button>' : ''}`;
 }
-function saveCloudToken() {
+async function saveCloudToken() {
   const v = document.getElementById('cloudToken').value.trim();
   if (!v) { alert('トークンを入力してください'); return; }
   localStorage.setItem(CLOUD_TOKEN_KEY, v);
-  cloudBackup(true).then(r => {
-    alert(r.ok ? '設定完了。バックアップに成功しました' : 'バックアップ失敗: ' + (r.error || '') + '\nトークンの権限（app-backupsリポのContents: Read and write）を確認してください');
+  // 先にクラウド側の既存バックアップを確認する（新端末の空データで上書きしない）
+  try {
+    const res = await fetch(cloudApi(), { headers: { 'Authorization': 'Bearer ' + v, 'Accept': 'application/vnd.github.raw+json' } });
+    if (res.ok) {
+      const s = JSON.parse(await res.text());
+      if (s && Array.isArray(s.entries) && s.entries.length > store.entries.length &&
+          confirm(`クラウドに既存のバックアップ（${s.entries.length}件）が見つかりました。この端末に復元しますか？\n\n（キャンセルすると、この端末のデータ（${store.entries.length}件）が今後のバックアップとして上書きされます）`)) {
+        store = normalize(s);
+        save();
+        setCloudMeta({ last: todayIso(), ok: true });
+        render();
+        alert('復元完了。自動バックアップも有効になりました');
+        return;
+      }
+    } else if (res.status !== 404) {
+      throw new Error('HTTP ' + res.status);
+    }
+    const r = await cloudBackup(true);
+    alert(r.ok ? '設定完了。バックアップに成功しました' : 'バックアップ失敗: ' + (r.error || ''));
     render();
-  });
+  } catch (e) {
+    alert('接続失敗: ' + (e && e.message || e) + '\nトークンの権限（app-backupsリポのContents: Read and write）を確認してください');
+    render();
+  }
 }
 function clearCloudToken() {
   if (!confirm('自動バックアップを停止しますか？（トークンを削除。クラウド上の既存バックアップは残ります）')) return;
