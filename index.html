@@ -383,7 +383,6 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<':
 function yen(n) { return '¥' + Number(n).toLocaleString('ja-JP'); }
 
 function entriesOfYm(ym) { return store.entries.filter(e => e.date.startsWith(ym)); }
-function entriesOfDate(date) { return store.entries.filter(e => e.date === date); }
 function kindOf(e) { const c = catById(e.catId); return c ? c.kind : 'exp'; }
 function sumBy(entries) {
   let exp = 0, inc = 0;

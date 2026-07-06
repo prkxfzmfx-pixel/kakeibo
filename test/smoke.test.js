@@ -323,6 +323,16 @@ A.go('input');
 assert.strictEqual(A.catsOf('exp').find(c => c.name === '食費').icon, '🍽️', 'デフォルトアイコン補完');
 console.log('OK 入力タブ（フォーム型・テンキー開閉・アイコン）');
 
+// 15a-4) 入力タブ下部に当日の記録一覧を出さない（2026-07-07に表示を廃止）
+A.go('input');
+A.store.entries.push({ id: 'eNoList', date: A.state.date, catId: food.id, amount: 999, memo: '一覧非表示テスト' });
+A.render();
+assert(A.store.entries.some(e => e.date === A.state.date), '当日の記録は存在する');
+assert(!elements.main.innerHTML.includes('entry-row'), '入力タブに明細行を出さない');
+assert(!elements.main.innerHTML.includes('の記録'), '「◯◯の記録」見出しを出さない');
+A.store.entries = A.store.entries.filter(e => e.id !== 'eNoList');
+console.log('OK 入力タブに当日記録一覧を出さない');
+
 // 15b) 入力タブを離れたら初期化される
 A.go('input');
 A.setKind('inc');
