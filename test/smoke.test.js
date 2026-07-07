@@ -41,6 +41,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
 ;globalThis.__api = {
   get store() { return store; },
   state, go, render, setDate, setKind, selectCat, pad, padBack, saveEntry, openEntry, deleteEntry, cancelEdit,
+  openPad, closePad, closePadSoft,
   calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind,
   renameCat, reorderCats, addCat, addRec, toggleRec, delRec,
   openBudgetEdit, closeBudgetEdit, chBudEditYm, setBudDraftTotal, setBudDraftCat, saveBudgetEdit, budgetForYm,
@@ -332,6 +333,39 @@ assert(!elements.main.innerHTML.includes('entry-row'), '入力タブに明細行
 assert(!elements.main.innerHTML.includes('の記録'), '「◯◯の記録」見出しを出さない');
 A.store.entries = A.store.entries.filter(e => e.id !== 'eNoList');
 console.log('OK 入力タブに当日記録一覧を出さない');
+
+// 15a-5) テンキーは金額欄フォーカス時のみ表示（他要素のタップ・フォーカスで閉じる）
+A.go('input');
+A.openPad();
+assert(elements.padhost.innerHTML.includes('padwrap'), 'テンキー表示');
+A.selectCat(food.id);
+assert.strictEqual(elements.padhost.innerHTML, '', 'カテゴリ選択で閉じる');
+A.openPad();
+A.closePadSoft(); // メモ・日付欄のonfocusから呼ばれる（再描画なしでフォーカスを保つ）
+assert.strictEqual(elements.padhost.innerHTML, '', 'フォーカス移動で閉じる');
+assert.strictEqual(A.state.padOpen, false, 'padOpenも解除');
+assert((elements.main.innerHTML.match(/onfocus="closePadSoft\(\)"/g) || []).length >= 2, 'メモ・日付欄にonfocusあり');
+A.openPad();
+A.setKind('inc');
+assert.strictEqual(elements.padhost.innerHTML, '', '支出/収入切替で閉じる');
+A.setKind('exp');
+console.log('OK テンキーのフォーカス制御（金額欄以外で閉じる）');
+
+// 15a-6) カレンダー: グリッド固定レイアウト＋ダブルタップで入力タブへ
+A.go('cal');
+assert.strictEqual(elements.main.className, 'calmode', 'カレンダーはmain固定モード');
+assert(elements.main.innerHTML.includes('class="cal-fixed"'), 'グリッド固定部あり');
+assert(elements.main.innerHTML.includes('class="cal-scroll"'), '明細スクロール部あり');
+const selIso = ym + '-03';
+A.calSelect(selIso);
+assert.strictEqual(A.state.tab, 'cal', 'シングルタップでは移動しない');
+assert.strictEqual(A.state.calSel, selIso, 'シングルタップで選択日が変わる');
+const dblIso = ym + '-04';
+A.calSelect(dblIso); A.calSelect(dblIso); // 400ms以内の2連タップ
+assert.strictEqual(A.state.tab, 'input', 'ダブルタップで入力タブへ');
+assert.strictEqual(A.state.date, dblIso, 'その日付がプリセットされる');
+assert.strictEqual(elements.main.className, '', '入力タブではcalmode解除');
+console.log('OK カレンダー固定グリッド・ダブルタップ');
 
 // 15b) 入力タブを離れたら初期化される
 A.go('input');

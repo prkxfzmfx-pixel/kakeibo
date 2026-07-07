@@ -72,6 +72,16 @@ main {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
 }
+/* カレンダータブ: グリッド部（.cal-fixed）は固定し、下部の明細（.cal-scroll）だけスクロール */
+main.calmode { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+.cal-fixed { flex-shrink: 0; }
+.cal-scroll {
+  flex: 1 1 0; min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding-bottom: 24px;
+}
 h1 { font-size: 18px; padding: 14px 4px 6px; }
 h2 { font-size: 14px; color: var(--ink-2); font-weight: 600; margin: 16px 4px 8px; }
 .card {
@@ -479,6 +489,8 @@ function go(tab) {
 function render() {
   renderNav();
   const main = document.getElementById('main');
+  // カレンダータブだけmain自体のスクロールを止め、内側の.cal-scrollをスクロールさせる
+  main.className = state.tab === 'cal' ? 'calmode' : '';
   // テンキーは入力タブ以外では常に閉じる
   if (state.tab !== 'input') document.getElementById('padhost').innerHTML = '';
   if (state.tab === 'input') renderInput(main);
@@ -508,12 +520,12 @@ function renderInput(main) {
   <div class="frow">
     <span class="flabel">日付</span>
     <button class="dnav" onclick="chDate(-1)" aria-label="前日">◀</button>
-    <input type="date" value="${state.date}" onchange="setDate(this.value)">
+    <input type="date" value="${state.date}" onfocus="closePadSoft()" onchange="setDate(this.value)">
     <button class="dnav" onclick="chDate(1)" aria-label="翌日">▶</button>
   </div>
   <div class="frow">
     <span class="flabel">メモ</span>
-    <input type="text" placeholder="未入力" value="${esc(state.memo)}" onchange="state.memo = this.value">
+    <input type="text" placeholder="未入力" value="${esc(state.memo)}" onfocus="closePadSoft()" onchange="state.memo = this.value">
   </div>
   <div class="frow" onclick="openPad()">
     <span class="flabel">${kindLabel}</span>
@@ -553,12 +565,20 @@ function entryRowHtml(e) {
     <span class="amt amt-${c.kind}">${sign}${yen(e.amount)}</span>
   </div>`;
 }
-function setDate(v) { if (v) { state.date = v; render(); } }
-function chDate(n) { state.date = shiftDate(state.date, n); render(); }
-function setKind(k) { state.kind = k; state.selCat = null; render(); }
-function selectCat(id) { state.selCat = id; render(); }
+function setDate(v) { if (v) { state.date = v; state.padOpen = false; render(); } }
+function chDate(n) { state.date = shiftDate(state.date, n); state.padOpen = false; render(); }
+function setKind(k) { state.kind = k; state.selCat = null; state.padOpen = false; render(); }
+function selectCat(id) { state.selCat = id; state.padOpen = false; render(); }
 function openPad() { state.padOpen = true; render(); }
 function closePad() { state.padOpen = false; render(); }
+// テンキー表示中に他の入力欄（メモ・日付）へフォーカスが移ったらテンキーだけ閉じる。
+// render()するとフォーカスが外れてOSキーボードが開かないため、padhostのみ消して再描画しない
+function closePadSoft() {
+  if (!state.padOpen) return;
+  state.padOpen = false;
+  const ph = document.getElementById('padhost');
+  if (ph) ph.innerHTML = '';
+}
 function pad(d) {
   if (state.amount.length >= 9) return;
   state.amount = (state.amount + d).replace(/^0+(?=\d)/, '');
@@ -657,6 +677,7 @@ function renderCal(main) {
   if (!days.length) listHtml = '<div class="empty">この月の記録はありません</div>';
 
   main.innerHTML = `
+  <div class="cal-fixed">
   <h1>カレンダー</h1>
   <div class="card">
     <div class="cal-head">
@@ -678,13 +699,20 @@ function renderCal(main) {
       <button class="ghost" style="padding:4px 8px" onclick="inputAt('${state.calSel}')">＋ この日に入力</button>
     </div>
   </div>
-  ${listHtml}`;
+  </div>
+  <div class="cal-scroll">${listHtml}</div>`;
 }
 function chCalYm(n) { state.calYm = shiftYm(state.calYm, n); render(); }
+// シングルタップ: 日を選択して下部明細の該当日へスクロール / ダブルタップ: その日をプリセットして入力タブへ
+let calTapIso = null, calTapAt = 0;
 function calSelect(iso) {
+  const now = Date.now();
+  const dbl = iso === calTapIso && (now - calTapAt) < 400;
+  calTapIso = iso; calTapAt = now;
+  if (dbl) { calTapIso = null; inputAt(iso); return; }
   state.calSel = iso;
   render();
-  // 下部の明細一覧のうち、選択した日のセクションへスクロール
+  // 下部の明細一覧（.cal-scroll内）のうち、選択した日のセクションへスクロール
   const el = document.getElementById('day-' + iso);
   if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
