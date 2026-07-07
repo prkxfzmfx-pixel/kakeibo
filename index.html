@@ -679,7 +679,7 @@ function renderCal(main) {
   main.innerHTML = `
   <div class="cal-fixed">
   <h1>カレンダー</h1>
-  <div class="card">
+  <div class="card" style="margin-bottom:6px">
     <div class="cal-head">
       <button onclick="chCalYm(-1)" aria-label="前月">◀</button>
       <span class="ym">${ymLabel(ym)}</span>
@@ -689,7 +689,11 @@ function renderCal(main) {
       <thead><tr>${WD.map(w => `<th>${w}</th>`).join('')}</tr></thead>
       <tbody>${cells}</tbody>
     </table>
-    <div class="sumline" style="margin-top:8px">
+  </div>
+  </div>
+  <div class="cal-scroll">
+  <div class="card">
+    <div class="sumline">
       <div><div class="lb">収入</div><div class="v amt-inc">${yen(msum.inc)}</div></div>
       <div><div class="lb">支出</div><div class="v amt-exp">${yen(msum.exp)}</div></div>
       <div><div class="lb">合計</div><div class="v num ${msum.net < 0 ? 'amt-exp' : ''}">${msum.net < 0 ? '-' : ''}${yen(Math.abs(msum.net))}</div></div>
@@ -699,8 +703,7 @@ function renderCal(main) {
       <button class="ghost" style="padding:4px 8px" onclick="inputAt('${state.calSel}')">＋ この日に入力</button>
     </div>
   </div>
-  </div>
-  <div class="cal-scroll">${listHtml}</div>`;
+  ${listHtml}</div>`;
 }
 function chCalYm(n) { state.calYm = shiftYm(state.calYm, n); render(); }
 // シングルタップ: 日を選択して下部明細の該当日へスクロール / ダブルタップ: その日をプリセットして入力タブへ
@@ -1226,12 +1229,45 @@ function cloudSettingsHtml() {
     <div class="hint">アプリを開いたとき1日1回、非公開リポジトリ（${CLOUD_REPO}）へ自動バックアップします。過去の世代も履歴に残ります。</div>
     <div style="font-size:13px">${status}</div>
     <div class="addrow">
+      <input type="password" id="cloudPin" inputmode="numeric" maxlength="6" placeholder="かんたん設定コード（6桁）" style="flex:1">
+      <button class="primary" onclick="applyPinToken()">適用</button>
+    </div>
+    <div class="addrow">
       <input type="password" id="cloudToken" placeholder="${tokenSet ? '設定済み（変更時のみ入力）' : 'GitHubトークンを貼り付け'}" style="flex:1">
       <button class="primary" onclick="saveCloudToken()">保存</button>
     </div>
     <button onclick="cloudBackupNow()">☁️ 今すぐバックアップ</button>
     <button onclick="cloudRestore()">⬇️ クラウドから復元</button>
     ${tokenSet ? '<button class="danger" onclick="clearCloudToken()">バックアップ停止（トークン削除）</button>' : ''}`;
+}
+/* かんたん設定: 6桁コードを入力すると、埋め込みの暗号文からトークンを復号して適用する。
+   PIN_BLOB は base64(salt16 | iv12 | AES-GCM暗号文)。コード本体・平文トークンはリポジトリに置かない。
+   コード誤り＝AES-GCMの復号失敗として検出する（コードの照合値も持たない）。
+   暗号文の再生成: node tools\make-pin-blob.js <6桁コード> <トークン> */
+const PIN_BLOB = '';
+async function decryptWithPin(pin, blobB64) {
+  const raw = Uint8Array.from(atob(blobB64), ch => ch.charCodeAt(0));
+  const salt = raw.slice(0, 16), iv = raw.slice(16, 28), ct = raw.slice(28);
+  const keyMat = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' },
+    keyMat, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+  return new TextDecoder().decode(pt);
+}
+async function applyPinToken() {
+  const pin = document.getElementById('cloudPin').value.trim();
+  let token;
+  try {
+    if (!/^\d{6}$/.test(pin) || !PIN_BLOB) throw new Error('bad pin');
+    token = await decryptWithPin(pin, PIN_BLOB);
+  } catch (e) {
+    alert('パスワードが間違っています');
+    return;
+  }
+  // 既存の保存フロー（クラウド側バックアップの確認→復元提案つき）に乗せる
+  document.getElementById('cloudToken').value = token;
+  await saveCloudToken();
 }
 async function saveCloudToken() {
   const v = document.getElementById('cloudToken').value.trim();

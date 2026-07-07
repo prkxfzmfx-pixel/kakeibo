@@ -41,7 +41,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
 ;globalThis.__api = {
   get store() { return store; },
   state, go, render, setDate, setKind, selectCat, pad, padBack, saveEntry, openEntry, deleteEntry, cancelEdit,
-  openPad, closePad, closePadSoft,
+  openPad, closePad, closePadSoft, decryptWithPin, applyPinToken,
   calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind,
   renameCat, reorderCats, addCat, addRec, toggleRec, delRec,
   openBudgetEdit, closeBudgetEdit, chBudEditYm, setBudDraftTotal, setBudDraftCat, saveBudgetEdit, budgetForYm,
@@ -356,6 +356,13 @@ A.go('cal');
 assert.strictEqual(elements.main.className, 'calmode', 'カレンダーはmain固定モード');
 assert(elements.main.innerHTML.includes('class="cal-fixed"'), 'グリッド固定部あり');
 assert(elements.main.innerHTML.includes('class="cal-scroll"'), '明細スクロール部あり');
+{
+  const calHtml = elements.main.innerHTML;
+  const fixedPart = calHtml.slice(0, calHtml.indexOf('cal-scroll'));
+  assert(fixedPart.includes('<table class="cal">'), '固定部はカレンダーグリッドを含む');
+  assert(!fixedPart.includes('sumline'), '月間まとめ（収入/支出/合計）は固定部に含めない');
+  assert(calHtml.indexOf('sumline') > calHtml.indexOf('cal-scroll'), '月間まとめはスクロール側');
+}
 const selIso = ym + '-03';
 A.calSelect(selIso);
 assert.strictEqual(A.state.tab, 'cal', 'シングルタップでは移動しない');
@@ -435,6 +442,28 @@ console.log('OK 旧形式データの移行');
   r = await A.cloudBackup(true);
   assert(r.ok, 'force指定は同日でも実行');
   console.log('OK クラウドバックアップ（1日1回・sha更新・スキップ判定）');
+
+  // 18) かんたん設定コード（6桁→トークン復号）。実コード・実トークンは使わずテスト専用の暗号文で往復検証
+  const enc = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const km = await crypto.subtle.importKey('raw', enc.encode('123456'), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode('github_pat_TESTTOKEN')));
+  const blob = Buffer.concat([salt, iv, ct]).toString('base64');
+  assert.strictEqual(await A.decryptWithPin('123456', blob), 'github_pat_TESTTOKEN', '正しいコードで復号できる');
+  let failed = false;
+  try { await A.decryptWithPin('000000', blob); } catch (e) { failed = true; }
+  assert(failed, '誤ったコードは復号失敗（AES-GCM認証エラー）');
+  A.go('settings');
+  assert(elements.main.innerHTML.includes('id="cloudPin"'), '設定タブにコード入力欄');
+  assert(elements.main.innerHTML.includes('applyPinToken()'), '適用ボタン');
+  elements.cloudPin = elements.cloudPin || { value: '' };
+  document.getElementById('cloudPin').value = '000000';
+  global.__lastAlert = '';
+  await A.applyPinToken();
+  assert.strictEqual(global.__lastAlert, 'パスワードが間違っています', '誤ったコードでエラーメッセージ');
+  console.log('OK かんたん設定コード（復号往復・誤コード検出）');
 
   console.log('\n=== 全項目 PASS ===');
 })().catch(e => { console.error(e); process.exit(1); });
