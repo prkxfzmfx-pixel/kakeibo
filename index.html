@@ -1244,7 +1244,7 @@ function cloudSettingsHtml() {
    PIN_BLOB は base64(salt16 | iv12 | AES-GCM暗号文)。コード本体・平文トークンはリポジトリに置かない。
    コード誤り＝AES-GCMの復号失敗として検出する（コードの照合値も持たない）。
    暗号文の再生成: node tools\make-pin-blob.js <6桁コード> <トークン> */
-const PIN_BLOB = '';
+const PIN_BLOB = 'brr+ly+ynAzA7q47ATgDFrjZJPKOgA0/m4mvi9Rg+9DKImr0jx+JozO5PxyiyJ/SLfclT6r0YSZyySyo86t6O1o+20zwg/YEZDLH/2Lug6midNSjc+nUg8q2EN+QkdgnSUzlWl5Jd+JrLBpBEQlAiiUuelu3z2bJ5ygsaCjZOSmVefNlNQ6c7fM=';
 async function decryptWithPin(pin, blobB64) {
   const raw = Uint8Array.from(atob(blobB64), ch => ch.charCodeAt(0));
   const salt = raw.slice(0, 16), iv = raw.slice(16, 28), ct = raw.slice(28);
