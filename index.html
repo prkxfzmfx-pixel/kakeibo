@@ -1200,14 +1200,22 @@ async function cloudBackup(force) {
   const today = todayIso();
   if (!force && cloudMeta().last === today) return { skipped: 'done-today' };
   try {
-    let sha;
-    const g = await fetch(cloudApi(), { headers: cloudHeaders(token) });
-    if (g.status === 200) sha = (await g.json()).sha;
-    const res = await fetch(cloudApi(), {
+    // GETは必ずcache:'no-store'。直前の別Accept形式のGET（トークン保存時のraw取得等）が
+    // HTTPキャッシュから返ると sha が取れず、既存ファイルへのPUTが422になるため。
+    const fetchSha = async () => {
+      const g = await fetch(cloudApi(), { headers: cloudHeaders(token), cache: 'no-store' });
+      return g.status === 200 ? (await g.json()).sha : undefined;
+    };
+    const put = sha => fetch(cloudApi(), {
       method: 'PUT',
       headers: cloudHeaders(token),
       body: JSON.stringify({ message: '自動バックアップ ' + today, content: b64utf8(JSON.stringify(store)), ...(sha ? { sha } : {}) }),
     });
+    let res = await put(await fetchSha());
+    if (res.status === 422 || res.status === 409) {
+      // sha欠落（キャッシュ由来）や並行更新との競合。shaを取り直して1回だけ再試行
+      res = await put(await fetchSha());
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     setCloudMeta({ last: today, ok: true });
     if (state.tab === 'settings') render();
@@ -1275,7 +1283,7 @@ async function saveCloudToken() {
   localStorage.setItem(CLOUD_TOKEN_KEY, v);
   // 先にクラウド側の既存バックアップを確認する（新端末の空データで上書きしない）
   try {
-    const res = await fetch(cloudApi(), { headers: { 'Authorization': 'Bearer ' + v, 'Accept': 'application/vnd.github.raw+json' } });
+    const res = await fetch(cloudApi(), { headers: { 'Authorization': 'Bearer ' + v, 'Accept': 'application/vnd.github.raw+json' }, cache: 'no-store' });
     if (res.ok) {
       const s = JSON.parse(await res.text());
       if (s && Array.isArray(s.entries) && s.entries.length > store.entries.length &&
@@ -1310,7 +1318,7 @@ async function cloudRestore() {
   const token = localStorage.getItem(CLOUD_TOKEN_KEY);
   if (!token) { alert('トークンが未設定です'); return; }
   try {
-    const res = await fetch(cloudApi(), { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github.raw+json' } });
+    const res = await fetch(cloudApi(), { headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github.raw+json' }, cache: 'no-store' });
     if (!res.ok) throw new Error(res.status === 404 ? 'クラウドにバックアップがまだありません' : 'HTTP ' + res.status);
     const s = JSON.parse(await res.text());
     if (!s || !Array.isArray(s.categories) || !Array.isArray(s.entries)) throw new Error('形式が違います');
