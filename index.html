@@ -379,7 +379,8 @@ function normalize(s) {
   }
   return s;
 }
-function save() { localStorage.setItem(LS_KEY, JSON.stringify(store)); }
+// 保存のたびに、当日既にバックアップ済みでも最新をクラウドへ同期する（当日中の変更消失を防ぐ）
+function save() { localStorage.setItem(LS_KEY, JSON.stringify(store)); cloudSyncSoon(); }
 
 function catById(id) { return store.categories.find(c => c.id === id); }
 function catsOf(kind, includeHidden) {
@@ -1273,12 +1274,24 @@ function b64utf8(s) {
 }
 function cloudApi() { return `https://api.github.com/repos/${CLOUD_REPO}/contents/${CLOUD_FILE}`; }
 function cloudHeaders(token) { return { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json' }; }
+// バックアップ済みデータと現在データの同一判定用の軽量ハッシュ（長さ＋32bitローリング）
+function contentHash(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36) + ':' + s.length;
+}
 
 async function cloudBackup(force) {
   const token = localStorage.getItem(CLOUD_TOKEN_KEY);
   if (!token) return { skipped: 'no-token' };
   const today = todayIso();
-  if (!force && cloudMeta().last === today) return { skipped: 'done-today' };
+  const payload = JSON.stringify(store);
+  const hash = contentHash(payload);
+  const meta = cloudMeta();
+  // 同日でも、前回のバックアップ以降にデータが変わっていれば必ず再バックアップする。
+  // 旧実装は「同日は1回で打ち切り」だったため、当日中に加えた変更（例: ボーナス扱い）が
+  // クラウドに残らず、復元・再インストール・キャッシュ切替時に失われる原因になっていた。
+  if (!force && meta.last === today && meta.hash === hash) return { skipped: 'up-to-date' };
   try {
     // GETは必ずcache:'no-store'。直前の別Accept形式のGET（トークン保存時のraw取得等）が
     // HTTPキャッシュから返ると sha が取れず、既存ファイルへのPUTが422になるため。
@@ -1289,7 +1302,7 @@ async function cloudBackup(force) {
     const put = sha => fetch(cloudApi(), {
       method: 'PUT',
       headers: cloudHeaders(token),
-      body: JSON.stringify({ message: '自動バックアップ ' + today, content: b64utf8(JSON.stringify(store)), ...(sha ? { sha } : {}) }),
+      body: JSON.stringify({ message: '自動バックアップ ' + today, content: b64utf8(payload), ...(sha ? { sha } : {}) }),
     });
     let res = await put(await fetchSha());
     if (res.status === 422 || res.status === 409) {
@@ -1297,7 +1310,7 @@ async function cloudBackup(force) {
       res = await put(await fetchSha());
     }
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    setCloudMeta({ last: today, ok: true });
+    setCloudMeta({ last: today, ok: true, hash });
     if (state.tab === 'settings') render();
     return { ok: true };
   } catch (e) {
@@ -1305,6 +1318,16 @@ async function cloudBackup(force) {
     if (state.tab === 'settings') render();
     return { error: String(e && e.message || e) };
   }
+}
+// データを変更したあと、まだ当日バックアップ済みでも最新をクラウドへ反映する（非ブロッキング）。
+// トークン未設定なら即return。連打を避けるため軽くデバウンスする
+let cloudSyncTimer = null;
+function cloudSyncSoon() {
+  if (!localStorage.getItem(CLOUD_TOKEN_KEY)) return;
+  if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => { cloudSyncTimer = null; cloudBackup(); }, 4000);
+  // Node（テスト）ではタイマーでプロセスを生かし続けないように（ブラウザのsetTimeoutは数値でunref無し）
+  if (cloudSyncTimer && cloudSyncTimer.unref) cloudSyncTimer.unref();
 }
 function cloudSettingsHtml() {
   const meta = cloudMeta();

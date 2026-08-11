@@ -39,11 +39,11 @@ global.FileReader = class { readAsText() {} };
 
 const bootstrap = `(function(){ 'use strict';\n` + appJs + `
 ;globalThis.__api = {
-  get store() { return store; },
+  get store() { return store; }, set store(v) { store = v; },
   state, go, render, setDate, setKind, selectCat, pad, padBack, saveEntry, openEntry, deleteEntry, cancelEdit,
   openPad, closePad, closePadSoft, decryptWithPin, applyPinToken,
   calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind, setBonus, sumSplit, twoRowSumHtml,
-  renameCat, reorderCats, addCat, addRec, toggleRec, delRec,
+  renameCat, reorderCats, addCat, addRec, toggleRec, delRec, normalize, cloudRestore,
   openBudgetEdit, closeBudgetEdit, chBudEditYm, setBudDraftTotal, setBudDraftCat, saveBudgetEdit, budgetForYm,
   applyRecurring, buildCsv, catsOf, inputCatsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup,
 };})()`;
@@ -533,10 +533,19 @@ console.log('OK ボーナス扱い（2行集計・括弧付きセル・レポー
   assert(JSON.parse(calls[1].body).sha === 'abc', '既存ファイルのshaを指定');
   assert(JSON.parse(lsData['kakeibo.cloudMeta']).last, 'バックアップ日を記録');
   r = await A.cloudBackup();
-  assert.strictEqual(r.skipped, 'done-today', '同日2回目はスキップ');
+  assert.strictEqual(r.skipped, 'up-to-date', '同日かつ内容不変ならスキップ');
   r = await A.cloudBackup(true);
   assert(r.ok, 'force指定は同日でも実行');
-  console.log('OK クラウドバックアップ（1日1回・sha更新・スキップ判定）');
+  // 消失バグ修正の核心: 同日でも内容が変わったら再バックアップされる（当日中の編集がクラウドに残る）
+  const beforeCount = calls.length;
+  A.store.entries.push({ id: 'chg1', date: today, catId: A.store.categories[0].id, amount: 1, memo: '変更', isBonus: true });
+  r = await A.cloudBackup();
+  assert(r.ok, '同日でも内容変更後は再バックアップされる');
+  assert(calls.length > beforeCount, '再バックアップでGET/PUTが発生');
+  r = await A.cloudBackup();
+  assert.strictEqual(r.skipped, 'up-to-date', '再度、内容不変ならスキップ');
+  A.store.entries = A.store.entries.filter(e => e.id !== 'chg1');
+  console.log('OK クラウドバックアップ（内容変化で同日再バックアップ・不変ならスキップ）');
 
   // 18) かんたん設定コード（6桁→トークン復号）。実コード・実トークンは使わずテスト専用の暗号文で往復検証
   const enc = new TextEncoder();
@@ -559,6 +568,51 @@ console.log('OK ボーナス扱い（2行集計・括弧付きセル・レポー
   await A.applyPinToken();
   assert.strictEqual(global.__lastAlert, 'パスワードが間違っています', '誤ったコードでエラーメッセージ');
   console.log('OK かんたん設定コード（復号往復・誤コード検出）');
+
+  // 19) isBonus消失バグ回帰防止: normalize / JSON往復 / クラウド backup→restore でisBonusが保持される
+  {
+    // normalize: true保持・未設定はfalse補完・二重normalizeでも不変
+    const n1 = A.normalize({
+      version: 1, categories: [{ id: 'e0', name: '食費', kind: 'exp', color: '#111111' }],
+      entries: [
+        { id: 'a', date: '2026-08-01', catId: 'e0', amount: 100, isBonus: true },
+        { id: 'b', date: '2026-08-02', catId: 'e0', amount: 200 },
+      ], budgets: {}, recurring: [],
+    });
+    assert.strictEqual(n1.entries[0].isBonus, true, 'normalize: isBonus:trueを保持');
+    assert.strictEqual(n1.entries[1].isBonus, false, 'normalize: 未設定はfalse補完');
+    const n2 = A.normalize(JSON.parse(JSON.stringify(n1)));
+    assert.strictEqual(n2.entries[0].isBonus, true, '二重normalizeでもtrue不変');
+
+    // JSONエクスポート→インポート相当（stringify→parse→normalize）
+    const jsonBack = A.normalize(JSON.parse(JSON.stringify(n1)));
+    assert.strictEqual(jsonBack.entries.filter(e => e.isBonus === true).length, 1, 'JSON往復でisBonus:true保持');
+
+    // クラウド backup→restore 往復（PUT本文を保管し、GET rawで返す簡易クラウド）
+    const savedStore = A.store;
+    A.store = n1;
+    let cloudBlob = null;
+    global.fetch = async (url, opts = {}) => {
+      const method = opts.method || 'GET';
+      if (method === 'PUT') { cloudBlob = JSON.parse(opts.body).content; return { ok: true, status: 200, json: async () => ({}), text: async () => '{}' }; }
+      const accept = (opts.headers && (opts.headers.Accept || opts.headers.accept)) || '';
+      if (cloudBlob == null) return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+      if (accept.includes('raw')) return { ok: true, status: 200, json: async () => ({}), text: async () => Buffer.from(cloudBlob, 'base64').toString('utf8') };
+      return { ok: true, status: 200, json: async () => ({ sha: 's' }), text: async () => '{}' };
+    };
+    lsData['kakeibo.cloudToken'] = 'tkn';
+    lsData['kakeibo.cloudMeta'] = '{}';
+    const rb = await A.cloudBackup(true);
+    assert(rb.ok, 'クラウドbackup成功');
+    const putStore = JSON.parse(Buffer.from(cloudBlob, 'base64').toString('utf8'));
+    assert.strictEqual(putStore.entries.filter(e => e.isBonus === true).length, 1, 'PUT本文にisBonus:trueが含まれる');
+    // 端末側を空にしてからクラウド復元 → isBonusが戻る
+    A.store = A.normalize({ version: 1, categories: n1.categories, entries: [], budgets: {}, recurring: [] });
+    await A.cloudRestore();
+    assert.strictEqual(A.store.entries.filter(e => e.isBonus === true).length, 1, 'クラウド復元でisBonus:true保持');
+    A.store = savedStore;
+    console.log('OK isBonus往復保持（normalize/JSON/クラウド backup+restore）');
+  }
 
   console.log('\n=== 全項目 PASS ===');
 })().catch(e => { console.error(e); process.exit(1); });

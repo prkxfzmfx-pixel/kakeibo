@@ -60,4 +60,5 @@ iPhoneのホーム画面から使う家計簿アプリ（「シンプル家計�
 - 予算: 月送り＋予算合計＋カテゴリ別（残り・バー・予算/支出・%）。編集は予算タブの「予算を設定」→月別編集ビュー。データは `budgets = {'YYYY-MM': {total, cats}}` の月別スナップショットで、保存した月から先の月へ引き継ぎ（budgetForYm。最初の設定より前の月にも最初の設定を適用）。totalが0ならカテゴリ予算合計を予算合計として表示。旧形式（catId→金額の単一マップ）はnormalize()で移行
 - 描画は `render()` が state.tab に応じて main.innerHTML を丸ごと書き換える方式。イベントはHTML属性のonclick
 - カテゴリ色は `COLOR_POOL`（先頭8色は検証済みパレット）。レポートのドーナツは上位7＋「その他まとめ」に折りたたむ（9スライス以上にしない）。金額表示は `yen()`（¥+3桁区切り）
-- クラウド自動バックアップ: 起動時＋前面復帰時に1日1回、非公開リポ `prkxfzmfx-pixel/app-backups` の `kakeibo.json` へGitHub API直接PUT（`cloudBackup()`）。トークン（Fine-grained PAT）はlocalStorage `kakeibo.cloudToken` にのみ保存。**トークンをコードやリポジトリに書かない**
+- クラウド自動バックアップ: 起動時＋前面復帰時＋データ保存時（`save()`→`cloudSyncSoon()`で4秒デバウンス）に、非公開リポ `prkxfzmfx-pixel/app-backups` の `kakeibo.json` へGitHub API直接PUT（`cloudBackup()`）。トークン（Fine-grained PAT）はlocalStorage `kakeibo.cloudToken` にのみ保存。**トークンをコードやリポジトリに書かない**
+  - **重要（2026-08-11のデータ消失バグ修正）**: 以前は「同日1回で打ち切り」だったため、当日中に加えた変更（ボーナス扱い等）がクラウドに残らず、復元・再インストール時に失われた。現在は `cloudMeta().hash`（内容の軽量ハッシュ）で判定し、**同日でも内容が変わっていれば再バックアップ**する。スキップ判定は「同日 かつ 内容不変」のときのみ（return `up-to-date`）。この往復でisBonus等が保持されることは smoke.test.js の回帰テストで守る
