@@ -1,5 +1,5 @@
 // ネットワーク優先・失敗時キャッシュ（オフラインでも起動できるように）
-const CACHE = 'kakeibo-v9';
+const CACHE = 'kakeibo-v10';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {

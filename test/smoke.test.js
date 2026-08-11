@@ -515,6 +515,47 @@ assert(!elements.main.innerHTML.includes('ボーナス'), 'ボーナス取引0�
 assert(elements.main.innerHTML.includes('repblock-h">通常'), '通常ブロックは常に表示');
 console.log('OK ボーナス扱い（2行集計・括弧付きセル・レポート2ブロック・編集変更）');
 
+// 16d) カレンダー由来の編集は更新/取消/削除後にカレンダーの該当日へ戻る（入力起点は従来通り留まる）
+const rentEntry = A.store.entries.find(e => e.recId); // 住居費（ym-01）
+// カレンダーから明細を開く → 入力タブへ移り、戻り先フラグが立つ
+A.go('cal');
+A.openEntry(rentEntry.id);
+assert.strictEqual(A.state.tab, 'input', '明細タップで入力タブへ');
+assert(A.state.editReturn && A.state.editReturn.tab === 'cal', 'カレンダー由来フラグが立つ');
+assert.strictEqual(A.state.editReturn.date, rentEntry.date, '戻り先日付を記録');
+// 金額を変えて更新 → カレンダーの同じ日へ戻る
+A.padBack(); // 80000 -> 8000
+A.saveEntry();
+assert.strictEqual(A.state.tab, 'cal', '更新後はカレンダーへ戻る');
+assert.strictEqual(A.state.calSel, rentEntry.date, '戻り先の選択日が編集した明細の日');
+assert.strictEqual(A.state.calYm, rentEntry.date.slice(0, 7), '表示月を編集した明細の月に合わせる');
+assert.strictEqual(A.state.editReturn, null, '戻ったらフラグはクリア');
+assert(elements.main.innerHTML.includes('id="day-' + rentEntry.date + '"'), '戻り先アンカーが描画される');
+// 別の月へ日付変更して更新 → 変更後の月・日へ戻る
+A.go('cal');
+A.openEntry(rentEntry.id);
+const otherDate = A.shiftYm(rentEntry.date.slice(0, 7), 1) + '-15';
+A.setDate(otherDate);
+A.saveEntry();
+assert.strictEqual(A.state.calYm, otherDate.slice(0, 7), '別月に変えたら戻り先も別月');
+assert.strictEqual(A.state.calSel, otherDate, '戻り先セルは変更後の日付');
+// 入力タブ起点の編集は入力タブに留まる（従来挙動）
+A.go('input');
+const salaryEntry = A.store.entries.find(e => e.amount === 280000);
+A.openEntry(salaryEntry.id); // state.tab は 'input' なので editReturn は立たない
+assert.strictEqual(A.state.editReturn, null, '入力起点はカレンダー戻りフラグ無し');
+A.padBack(); // 280000 -> 28000
+A.saveEntry();
+assert.strictEqual(A.state.tab, 'input', '入力起点の編集後は入力タブに留まる');
+// カレンダー由来のキャンセルもカレンダーへ戻る
+A.go('cal');
+A.openEntry(salaryEntry.id);
+assert(A.state.editReturn && A.state.editReturn.tab === 'cal', 'キャンセル前提: cal由来');
+A.cancelEdit();
+assert.strictEqual(A.state.tab, 'cal', 'キャンセルでもカレンダーへ戻る');
+assert.strictEqual(A.state.editReturn, null, 'キャンセルでフラグクリア');
+console.log('OK カレンダー由来の編集は更新/取消後にカレンダーへ戻る（入力起点は留まる）');
+
 // 17) クラウドバックアップ（fetchモック）
 (async () => {
   const calls = [];

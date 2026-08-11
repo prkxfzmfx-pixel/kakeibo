@@ -510,6 +510,7 @@ const state = {
   isBonus: false,        // ボーナス扱いにするか
   padOpen: false,        // 金額テンキーの表示状態
   editId: null,          // 編集中エントリid
+  editReturn: null,      // カレンダー由来の編集なら {tab:'cal', date}。更新/取消/削除後にそこへ戻る
   calYm: todayIso().slice(0, 7),
   calSel: todayIso(),
   budYm: todayIso().slice(0, 7),
@@ -541,6 +542,7 @@ function toTop() { const m = document.getElementById('main'); if (m) m.scrollTop
 function resetInput() {
   state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null;
   state.kind = 'exp'; state.date = todayIso(); state.padOpen = false; state.isBonus = false;
+  state.editReturn = null;
 }
 function go(tab) {
   if (state.tab === 'input' && tab !== 'input') resetInput();
@@ -660,7 +662,10 @@ function saveEntry() {
   const amount = Number(state.amount);
   if (!state.selCat) { alert('カテゴリを選んでください'); return; }
   if (!amount || amount <= 0) { alert('金額を入力してください'); return; }
-  if (state.editId != null) {
+  const wasEdit = state.editId != null;
+  const ret = state.editReturn;      // カレンダー由来の編集か
+  const backDate = state.date;       // 更新後の日付（月をまたぐ変更にも追従）
+  if (wasEdit) {
     const e = store.entries.find(x => x.id === state.editId);
     if (e) { e.date = state.date; e.catId = state.selCat; e.amount = amount; e.memo = state.memo; e.isBonus = state.isBonus; }
     state.editId = null;
@@ -668,12 +673,17 @@ function saveEntry() {
     store.entries.push({ id: newId('n'), date: state.date, catId: state.selCat, amount, memo: state.memo, isBonus: state.isBonus });
   }
   state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false; state.isBonus = false;
-  save(); render();
+  save();
+  // カレンダーから開いた編集なら、更新後はカレンダーの該当日セクションへ戻る
+  if (wasEdit && ret && ret.tab === 'cal') { returnToCal(backDate); return; }
+  render();
 }
 function openEntry(id) {
   const e = store.entries.find(x => x.id === id);
   if (!e) return;
   const c = catById(e.catId);
+  // カレンダーの明細から開いたときだけ、更新/取消/削除後にカレンダーへ戻すためのフラグを立てる
+  state.editReturn = state.tab === 'cal' ? { tab: 'cal', date: e.date } : null;
   state.tab = 'input';
   state.editId = id;
   state.date = e.date;
@@ -684,15 +694,32 @@ function openEntry(id) {
   state.isBonus = !!e.isBonus;
   render(); toTop();
 }
+// カレンダーの指定日セクションへ戻る（表示月を合わせてから該当アンカーへスクロール）
+function returnToCal(date) {
+  state.editReturn = null;
+  state.calYm = date.slice(0, 7);
+  state.calSel = date;
+  state.tab = 'cal';
+  render();
+  const el = document.getElementById('day-' + date);
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 function cancelEdit() {
+  const ret = state.editReturn;
+  const backDate = ret && ret.date;
   state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false; state.isBonus = false;
+  if (ret && ret.tab === 'cal') { returnToCal(backDate); return; }
   render();
 }
 function deleteEntry() {
   if (!confirm('この記録を削除しますか？')) return;
+  const ret = state.editReturn;
+  const backDate = ret && ret.date;
   store.entries = store.entries.filter(x => x.id !== state.editId);
   state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false; state.isBonus = false;
-  save(); render();
+  save();
+  if (ret && ret.tab === 'cal') { returnToCal(backDate); return; }
+  render();
 }
 
 /* ================= カレンダー ================= */
