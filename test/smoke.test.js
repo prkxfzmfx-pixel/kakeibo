@@ -424,6 +424,14 @@ console.log('OK 旧形式データの移行');
 // 16c) ボーナス扱い: 入力・保存・集計（通常/ボーナス/合算）・明細バッジ・編集変更
 // この時点の店舗の当月データ: 給料280,000(通常収入)・住居費80,000(通常支出/固定費)
 A.go('input');
+// トグルスイッチのDOM構造（input隠し＋.toggle描画）とラベル文言
+{
+  const h = elements.main.innerHTML;
+  assert(h.includes('class="toggle-input"'), '隠しチェックボックス(toggle-input)');
+  assert(h.includes('class="toggle"'), 'トグルの描画要素(.toggle)');
+  assert(h.includes('ボーナス扱いにする'), 'ラベル文言は維持');
+  assert(h.includes('onchange="setBonus(this.checked)"'), 'setBonus連動');
+}
 A.setKind('inc'); A.selectCat(salary.id);
 '100000'.split('').forEach(d => A.pad(d));
 A.setBonus(true);
