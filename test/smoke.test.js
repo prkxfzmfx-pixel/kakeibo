@@ -16,9 +16,10 @@ global.localStorage = {
 const elements = {};
 function makeEl(id) {
   return {
-    id, innerHTML: '', value: '', style: {}, files: [],
+    id, innerHTML: '', value: '', style: {}, files: [], scrollTop: 0,
     addEventListener() {}, setAttribute() {},
     appendChild() {}, click() {}, remove() {},
+    scrollIntoView(opts) { this.__siv = opts; global.__lastSiv = opts; },
   };
 }
 global.document = {
@@ -376,6 +377,17 @@ assert.strictEqual(A.state.tab, 'input', 'ダブルタップで入力タブへ')
 assert.strictEqual(A.state.date, dblIso, 'その日付がプリセットされる');
 assert.strictEqual(elements.main.className, '', '入力タブではcalmode解除');
 console.log('OK カレンダー固定グリッド・ダブルタップ');
+
+// 15a-6c) 日選択はスクロール位置を維持し、対象日へ最小移動（block:'nearest'）で二段ジャンプしない
+A.go('cal');
+const calSc = document.getElementById('calScroll');
+calSc.scrollTop = 500;                 // 例: 3日までスクロール済みの状態を模擬
+global.__lastSiv = null;
+A.calSelect(ym + '-02');               // 2日を選択（別日なのでダブルタップにならない）
+assert.strictEqual(A.state.calSel, ym + '-02', '選択日が更新される');
+assert.strictEqual(document.getElementById('calScroll').scrollTop, 500, 'スクロール位置が0にリセットされない');
+assert(global.__lastSiv && global.__lastSiv.block === 'nearest', 'block:nearestで最小移動');
+console.log('OK 日選択のスクロール維持（位置保持＋nearest）');
 
 // 15b) 入力タブを離れたら初期化される
 A.go('input');

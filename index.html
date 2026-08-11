@@ -791,7 +791,7 @@ function renderCal(main) {
     </table>
   </div>
   </div>
-  <div class="cal-scroll">
+  <div class="cal-scroll" id="calScroll">
   <div class="card">
     ${twoRowSumHtml(entriesOfYm(ym))}
   </div>
@@ -805,11 +805,17 @@ function calSelect(iso) {
   const dbl = iso === calTapIso && (now - calTapAt) < 400;
   calTapIso = iso; calTapAt = now;
   if (dbl) { calTapIso = null; inputAt(iso); return; }
+  // 再描画で main.innerHTML を丸ごと作り直すとスクロールコンテナ（.cal-scroll）の
+  // 位置が0に戻り「最上部→対象日」の二段ジャンプになる。位置を退避→復元してから、
+  // block:'nearest' で対象日が可視域にあればほぼ動かさない（最小移動）ようにする。
+  const sc = document.getElementById('calScroll');
+  const prevTop = sc ? sc.scrollTop : 0;
   state.calSel = iso;
   render();
-  // 下部の明細一覧（.cal-scroll内）のうち、選択した日のセクションへスクロール
+  const sc2 = document.getElementById('calScroll');
+  if (sc2) sc2.scrollTop = prevTop;
   const el = document.getElementById('day-' + iso);
-  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 function inputAt(iso) { state.date = iso; state.tab = 'input'; state.editId = null; render(); toTop(); }
 
