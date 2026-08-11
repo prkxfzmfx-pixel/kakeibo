@@ -188,6 +188,19 @@ nav button.active { color: var(--accent); font-weight: 600; }
 .sumline .lb { font-size: 11px; color: var(--muted); }
 .sumline .v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
+/* 通常/ボーナス/合算の内訳テーブル（カレンダー・レポート） */
+.splitwrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 8px; }
+.splitsum { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.splitsum th, .splitsum td { padding: 4px 6px; font-size: 12px; text-align: right; white-space: nowrap; }
+.splitsum thead th { color: var(--muted); font-weight: 500; }
+.splitsum th:first-child, .splitsum td:first-child { text-align: left; color: var(--muted); font-weight: 600; }
+.splitsum tr.rowtot td { border-top: 1px solid var(--grid); font-weight: 700; }
+/* ボーナス扱いの入力チェック・明細バッジ */
+.bonus-row { justify-content: flex-start; gap: 10px; cursor: pointer; }
+.bonus-row input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); flex-shrink: 0; }
+.bonus-row .txt { font-size: 14px; color: var(--ink-2); }
+.bonus-badge { font-size: 10px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 8px; padding: 0 5px; line-height: 16px; flex-shrink: 0; }
+
 /* カレンダー */
 .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .cal-head .ym { font-size: 17px; font-weight: 700; }
@@ -326,6 +339,10 @@ function normalize(s) {
       else { if (!b.cats) b.cats = {}; b.total = Number(b.total) || 0; }
     }
   }
+  // 取引: ボーナス扱いフラグを補完（旧データ＝isBonus未設定は false＝通常扱い）
+  for (const e of s.entries) {
+    if (typeof e.isBonus !== 'boolean') e.isBonus = false;
+  }
   // カテゴリにアイコンがなければ名前から補完
   for (const c of s.categories) {
     if (!c.icon) c.icon = DEFAULT_CAT_ICONS[c.name] || (c.kind === 'exp' ? '🐷' : '💰');
@@ -399,6 +416,35 @@ function sumBy(entries) {
   for (const e of entries) { if (kindOf(e) === 'exp') exp += e.amount; else inc += e.amount; }
   return { exp, inc, net: inc - exp };
 }
+// ボーナス有無で分けた集計。normal（通常分）/ bonus（ボーナス分）/ total（合算）
+function sumSplit(entries) {
+  const g = { normal: { exp: 0, inc: 0 }, bonus: { exp: 0, inc: 0 } };
+  for (const e of entries) {
+    (e.isBonus ? g.bonus : g.normal)[kindOf(e) === 'exp' ? 'exp' : 'inc'] += e.amount;
+  }
+  const mk = o => ({ exp: o.exp, inc: o.inc, net: o.inc - o.exp });
+  return {
+    normal: mk(g.normal),
+    bonus: mk(g.bonus),
+    total: mk({ exp: g.normal.exp + g.bonus.exp, inc: g.normal.inc + g.bonus.inc }),
+  };
+}
+// 通常/ボーナス/合算の内訳テーブル。ボーナス分が無い期間は空文字（＝従来の見た目を崩さない）
+function splitTableHtml(entries) {
+  const s = sumSplit(entries);
+  if (!s.bonus.exp && !s.bonus.inc) return '';
+  const signYen = n => `${n < 0 ? '-' : ''}${yen(Math.abs(n))}`;
+  const row = (label, gr, cls) => `<tr class="${cls || ''}">
+    <td>${label}</td>
+    <td class="amt-inc">${yen(gr.inc)}</td>
+    <td class="amt-exp">${yen(gr.exp)}</td>
+    <td class="${gr.net < 0 ? 'amt-exp' : ''}">${signYen(gr.net)}</td>
+  </tr>`;
+  return `<div class="splitwrap"><table class="splitsum">
+    <thead><tr><th>内訳</th><th>収入</th><th>支出</th><th>収支</th></tr></thead>
+    <tbody>${row('通常', s.normal)}${row('ボーナス', s.bonus)}${row('合算', s.total, 'rowtot')}</tbody>
+  </table></div>`;
+}
 
 /* ================= 固定費・固定収入の自動記帳 ================= */
 // 開始日から毎月同じ日（月末クランプ）に、当日以降アプリを開いたときに記帳する。
@@ -446,6 +492,7 @@ const state = {
   selCat: null,
   amount: '',            // 入力中の金額（文字列）
   memo: '',
+  isBonus: false,        // ボーナス扱いにするか
   padOpen: false,        // 金額テンキーの表示状態
   editId: null,          // 編集中エントリid
   calYm: todayIso().slice(0, 7),
@@ -478,7 +525,7 @@ function toTop() { const m = document.getElementById('main'); if (m) m.scrollTop
 // 入力タブの状態を初期値に戻す（タブを離れたときに呼ぶ）
 function resetInput() {
   state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null;
-  state.kind = 'exp'; state.date = todayIso(); state.padOpen = false;
+  state.kind = 'exp'; state.date = todayIso(); state.padOpen = false; state.isBonus = false;
 }
 function go(tab) {
   if (state.tab === 'input' && tab !== 'input') resetInput();
@@ -531,6 +578,10 @@ function renderInput(main) {
     <span class="flabel">${kindLabel}</span>
     <div class="amtbox">${state.amount ? Number(state.amount).toLocaleString('ja-JP') : '<span style="color:var(--muted)">0</span>'}<span class="en">円</span></div>
   </div>
+  <label class="frow bonus-row">
+    <input type="checkbox" ${state.isBonus ? 'checked' : ''} onchange="setBonus(this.checked)">
+    <span class="txt">ボーナス扱いにする</span>
+  </label>
   <h2>カテゴリー</h2>` +
     (cats.length ? `<div class="catgrid">` +
       cats.map(c => `<button class="${state.selCat === c.id ? 'sel' : ''}" onclick="selectCat('${c.id}')">
@@ -561,10 +612,13 @@ function entryRowHtml(e) {
   return `<div class="entry-row" onclick="openEntry('${e.id}')">
     <span class="eicon">${esc(c.icon || '')}</span>
     <span class="cname">${esc(c.name)}</span>
+    ${e.isBonus ? '<span class="bonus-badge">ボーナス</span>' : ''}
     <span class="memo">${esc(e.memo || '')}</span>
     <span class="amt amt-${c.kind}">${sign}${yen(e.amount)}</span>
   </div>`;
 }
+// ボーナス扱いのトグル。再描画するとテンキーが閉じるため、状態だけ更新（DOMのcheckedは反映済み）
+function setBonus(v) { state.isBonus = !!v; }
 function setDate(v) { if (v) { state.date = v; state.padOpen = false; render(); } }
 function chDate(n) { state.date = shiftDate(state.date, n); state.padOpen = false; render(); }
 function setKind(k) { state.kind = k; state.selCat = null; state.padOpen = false; render(); }
@@ -592,12 +646,12 @@ function saveEntry() {
   if (!amount || amount <= 0) { alert('金額を入力してください'); return; }
   if (state.editId != null) {
     const e = store.entries.find(x => x.id === state.editId);
-    if (e) { e.date = state.date; e.catId = state.selCat; e.amount = amount; e.memo = state.memo; }
+    if (e) { e.date = state.date; e.catId = state.selCat; e.amount = amount; e.memo = state.memo; e.isBonus = state.isBonus; }
     state.editId = null;
   } else {
-    store.entries.push({ id: newId('n'), date: state.date, catId: state.selCat, amount, memo: state.memo });
+    store.entries.push({ id: newId('n'), date: state.date, catId: state.selCat, amount, memo: state.memo, isBonus: state.isBonus });
   }
-  state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false;
+  state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false; state.isBonus = false;
   save(); render();
 }
 function openEntry(id) {
@@ -611,16 +665,17 @@ function openEntry(id) {
   state.selCat = e.catId;
   state.amount = String(e.amount);
   state.memo = e.memo || '';
+  state.isBonus = !!e.isBonus;
   render(); toTop();
 }
 function cancelEdit() {
-  state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false;
+  state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false; state.isBonus = false;
   render();
 }
 function deleteEntry() {
   if (!confirm('この記録を削除しますか？')) return;
   store.entries = store.entries.filter(x => x.id !== state.editId);
-  state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false;
+  state.editId = null; state.amount = ''; state.memo = ''; state.selCat = null; state.padOpen = false; state.isBonus = false;
   save(); render();
 }
 
@@ -698,6 +753,7 @@ function renderCal(main) {
       <div><div class="lb">支出</div><div class="v amt-exp">${yen(msum.exp)}</div></div>
       <div><div class="lb">合計</div><div class="v num ${msum.net < 0 ? 'amt-exp' : ''}">${msum.net < 0 ? '-' : ''}${yen(Math.abs(msum.net))}</div></div>
     </div>
+    ${splitTableHtml(entriesOfYm(ym))}
     <div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)">
       選択日: ${fmtIso(state.calSel)}
       <button class="ghost" style="padding:4px 8px" onclick="inputAt('${state.calSel}')">＋ この日に入力</button>
@@ -762,6 +818,7 @@ function renderReport(main) {
       <div class="box"><span>収入</span><b class="amt-inc">+${yen(sums.inc)}</b></div>
       <div class="box net"><span>収支</span><b class="${sums.net < 0 ? 'amt-exp' : ''}">${sums.net < 0 ? '-' : ''}${yen(Math.abs(sums.net))}</b></div>
     </div>
+    ${splitTableHtml(entriesAll)}
     <div class="kindtabs">
       <button class="${kind === 'exp' ? 'on-exp' : ''}" onclick="setRepKind('exp')">支出</button>
       <button class="${kind === 'inc' ? 'on-inc' : ''}" onclick="setRepKind('inc')">収入</button>

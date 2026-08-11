@@ -42,7 +42,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
   get store() { return store; },
   state, go, render, setDate, setKind, selectCat, pad, padBack, saveEntry, openEntry, deleteEntry, cancelEdit,
   openPad, closePad, closePadSoft, decryptWithPin, applyPinToken,
-  calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind,
+  calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind, setBonus, sumSplit, splitTableHtml,
   renameCat, reorderCats, addCat, addRec, toggleRec, delRec,
   openBudgetEdit, closeBudgetEdit, chBudEditYm, setBudDraftTotal, setBudDraftCat, saveBudgetEdit, budgetForYm,
   applyRecurring, buildCsv, catsOf, inputCatsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup,
@@ -403,7 +403,7 @@ const savedAll = lsData['kakeibo.v1'];
 lsData['kakeibo.v1'] = JSON.stringify({
   version: 1,
   categories: [{ id: 'e0', name: '食費', kind: 'exp', color: '#2a78d6' }],
-  entries: [],
+  entries: [{ id: 'x1', date: '2026-06-15', catId: 'e0', amount: 500, memo: '旧記録' }],
   budgets: { e0: 12345 },
   recurring: [{ id: 'r1', catId: 'e0', amount: 500, day: 28, memo: 'x', lastApplied: '2026-06', endYm: '2027-01' }],
 });
@@ -417,8 +417,77 @@ assert(!('day' in mig.recurring[0]) && !('endYm' in mig.recurring[0]), '旧フ�
 assert(Object.keys(mig.budgets).every(k => /^\d{4}-\d{2}$/.test(k)), '予算キーが月形式へ移行');
 assert.strictEqual(A3.budgetForYm(A3.todayIso().slice(0, 7)).cats.e0, 12345, '旧予算額を引き継ぎ');
 assert.strictEqual(A3.budgetForYm('2020-01').cats.e0, 12345, '過去の月にも適用');
+assert.strictEqual(mig.entries[0].isBonus, false, '旧取引はisBonus未設定→false補完');
 lsData['kakeibo.v1'] = savedAll;
 console.log('OK 旧形式データの移行');
+
+// 16c) ボーナス扱い: 入力・保存・集計（通常/ボーナス/合算）・明細バッジ・編集変更
+// この時点の店舗の当月データ: 給料280,000(通常収入)・住居費80,000(通常支出/固定費)
+A.go('input');
+A.setKind('inc'); A.selectCat(salary.id);
+'100000'.split('').forEach(d => A.pad(d));
+A.setBonus(true);
+assert.strictEqual(A.state.isBonus, true, 'setBonusで状態が立つ');
+A.saveEntry();
+assert.strictEqual(A.state.isBonus, false, '保存後にボーナスフラグはリセット');
+const bonusInc = A.store.entries.find(e => e.amount === 100000 && e.isBonus);
+assert(bonusInc && bonusInc.isBonus === true, 'ボーナス収入が保存される');
+// ボーナス支出も追加
+A.go('input');
+A.setKind('exp'); A.selectCat(food.id);
+'30000'.split('').forEach(d => A.pad(d));
+A.setBonus(true);
+A.saveEntry();
+const bonusExp = A.store.entries.find(e => e.amount === 30000 && e.isBonus);
+assert(bonusExp && bonusExp.isBonus === true, 'ボーナス支出が保存される');
+// 通常入力はデフォルトでisBonus=false
+A.go('input');
+A.setKind('exp'); A.selectCat(food.id);
+'400'.split('').forEach(d => A.pad(d));
+A.saveEntry();
+const normalExp = A.store.entries.find(e => e.amount === 400);
+assert.strictEqual(normalExp.isBonus, false, 'チェックなしの入力はisBonus=false');
+// 集計の分離: 通常/ボーナス/合算
+const sp = A.sumSplit(A.entriesOfYm(ym));
+assert.strictEqual(sp.normal.inc, 280000, '通常収入=給料280,000');
+assert.strictEqual(sp.bonus.inc, 100000, 'ボーナス収入=100,000');
+assert.strictEqual(sp.total.inc, 380000, '合算収入=380,000');
+assert.strictEqual(sp.normal.exp, 80400, '通常支出=住居費80,000+400');
+assert.strictEqual(sp.bonus.exp, 30000, 'ボーナス支出=30,000');
+assert.strictEqual(sp.total.exp, 110400, '合算支出=110,400');
+assert.strictEqual(sp.normal.net, 199600, '通常収支');
+assert.strictEqual(sp.bonus.net, 70000, 'ボーナス収支');
+assert.strictEqual(sp.total.net, 269600, '合算収支');
+console.log('OK ボーナス集計の分離（通常/ボーナス/合算）');
+// カレンダー: 内訳テーブル＋明細バッジ
+A.go('cal');
+{
+  const h = elements.main.innerHTML;
+  assert(h.includes('class="splitsum"'), 'カレンダーに通常/ボーナス内訳テーブル');
+  assert(h.includes('内訳') && h.includes('通常') && h.includes('合算'), '内訳の見出し・行');
+  assert(h.includes('bonus-badge'), '明細にボーナスバッジ');
+  assert(h.includes('¥380,000'), '合算収入がテーブルに出る');
+}
+// レポート（月間）: 内訳テーブル
+A.go('report');
+A.setRepMode('month');
+assert(elements.main.innerHTML.includes('class="splitsum"'), 'レポート月間に内訳テーブル');
+// レポート（年間）: 内訳テーブル
+A.setRepMode('year');
+assert(elements.main.innerHTML.includes('class="splitsum"'), 'レポート年間に内訳テーブル');
+A.setRepMode('month');
+// ボーナスが無い期間は内訳を出さない（従来の見た目を崩さない）
+assert.strictEqual(A.splitTableHtml(A.entriesOfYm(A.shiftYm(ym, -24))), '', 'ボーナスの無い期間は内訳非表示');
+// 編集で既存取引のボーナス扱いを解除できる
+A.openEntry(bonusInc.id);
+assert.strictEqual(A.state.isBonus, true, '編集時にボーナス状態を復元');
+A.setBonus(false);
+A.saveEntry();
+assert.strictEqual(A.store.entries.find(e => e.id === bonusInc.id).isBonus, false, '編集でボーナス解除');
+// 後始末: 追加した取引を除去して以降のテストへ影響させない
+A.store.entries = A.store.entries.filter(e => ![bonusInc.id, bonusExp.id, normalExp.id].includes(e.id));
+lsData['kakeibo.v1'] = JSON.stringify(A.store);
+console.log('OK ボーナス扱い（入力チェック・バッジ・レポート内訳・編集変更）');
 
 // 17) クラウドバックアップ（fetchモック）
 (async () => {
