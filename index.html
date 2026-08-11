@@ -188,13 +188,15 @@ nav button.active { color: var(--accent); font-weight: 600; }
 .sumline .lb { font-size: 11px; color: var(--muted); }
 .sumline .v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
-/* 通常/ボーナス/合算の内訳テーブル（カレンダー・レポート） */
+/* 通常/ボーナスの2行集計テーブル（カレンダー月まとめ）・年間の月別内訳テーブル */
 .splitwrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 8px; }
-.splitsum { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.splitsum th, .splitsum td { padding: 4px 6px; font-size: 12px; text-align: right; white-space: nowrap; }
-.splitsum thead th { color: var(--muted); font-weight: 500; }
-.splitsum th:first-child, .splitsum td:first-child { text-align: left; color: var(--muted); font-weight: 600; }
-.splitsum tr.rowtot td { border-top: 1px solid var(--grid); font-weight: 700; }
+.splitsum, table.sum { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.splitsum th, .splitsum td, table.sum th, table.sum td { padding: 4px 6px; font-size: 12px; text-align: right; white-space: nowrap; }
+.splitsum thead th, table.sum thead th { color: var(--muted); font-weight: 500; }
+.splitsum th:first-child, .splitsum td:first-child, table.sum th:first-child, table.sum td:first-child { text-align: left; color: var(--muted); font-weight: 600; }
+table.sum tbody tr:last-child td { border-top: 1px solid var(--grid); }
+/* レポートの通常/ボーナスブロック見出し */
+.repblock-h { margin: 16px 4px 6px; font-size: 15px; color: var(--ink-1); }
 /* ボーナス扱いの入力トグル（iOS風スイッチ）・明細バッジ */
 .bonus-row { justify-content: flex-start; gap: 10px; cursor: pointer; }
 .bonus-row .txt { font-size: 14px; color: var(--ink-2); flex: 1; }
@@ -433,33 +435,28 @@ function sumBy(entries) {
   for (const e of entries) { if (kindOf(e) === 'exp') exp += e.amount; else inc += e.amount; }
   return { exp, inc, net: inc - exp };
 }
-// ボーナス有無で分けた集計。normal（通常分）/ bonus（ボーナス分）/ total（合算）
+// ボーナス有無で分けた集計。normal（通常分）/ bonus（ボーナス分）。合算はしない
 function sumSplit(entries) {
   const g = { normal: { exp: 0, inc: 0 }, bonus: { exp: 0, inc: 0 } };
   for (const e of entries) {
     (e.isBonus ? g.bonus : g.normal)[kindOf(e) === 'exp' ? 'exp' : 'inc'] += e.amount;
   }
   const mk = o => ({ exp: o.exp, inc: o.inc, net: o.inc - o.exp });
-  return {
-    normal: mk(g.normal),
-    bonus: mk(g.bonus),
-    total: mk({ exp: g.normal.exp + g.bonus.exp, inc: g.normal.inc + g.bonus.inc }),
-  };
+  return { normal: mk(g.normal), bonus: mk(g.bonus) };
 }
-// 通常/ボーナス/合算の内訳テーブル。ボーナス分が無い期間は空文字（＝従来の見た目を崩さない）
-function splitTableHtml(entries) {
+// カレンダー月まとめ用: 通常行・ボーナス行の2行（収入/支出/合計）。合算行は作らない
+function twoRowSumHtml(entries) {
   const s = sumSplit(entries);
-  if (!s.bonus.exp && !s.bonus.inc) return '';
   const signYen = n => `${n < 0 ? '-' : ''}${yen(Math.abs(n))}`;
-  const row = (label, gr, cls) => `<tr class="${cls || ''}">
+  const row = (label, gr) => `<tr>
     <td>${label}</td>
     <td class="amt-inc">${yen(gr.inc)}</td>
     <td class="amt-exp">${yen(gr.exp)}</td>
     <td class="${gr.net < 0 ? 'amt-exp' : ''}">${signYen(gr.net)}</td>
   </tr>`;
   return `<div class="splitwrap"><table class="splitsum">
-    <thead><tr><th>内訳</th><th>収入</th><th>支出</th><th>収支</th></tr></thead>
-    <tbody>${row('通常', s.normal)}${row('ボーナス', s.bonus)}${row('合算', s.total, 'rowtot')}</tbody>
+    <thead><tr><th></th><th>収入</th><th>支出</th><th>合計</th></tr></thead>
+    <tbody>${row('通常', s.normal)}${row('ボーナス', s.bonus)}</tbody>
   </table></div>`;
 }
 
@@ -705,14 +702,13 @@ function renderCal(main) {
   const startWd = first.getDay();
   const dim = daysInYm(ym);
   const today = todayIso();
-  const msum = sumBy(entriesOfYm(ym));
 
-  // 日別合計
+  // 日別合計（通常分と、ボーナス扱い分を分けて集計）
   const byDay = {};
   for (const e of entriesOfYm(ym)) {
     const d = e.date;
-    if (!byDay[d]) byDay[d] = { exp: 0, inc: 0 };
-    byDay[d][kindOf(e)] += e.amount;
+    if (!byDay[d]) byDay[d] = { exp: 0, inc: 0, bexp: 0, binc: 0 };
+    byDay[d][(e.isBonus ? 'b' : '') + kindOf(e)] += e.amount;
   }
 
   let cells = '', row = '<tr>';
@@ -720,10 +716,13 @@ function renderCal(main) {
   for (let day = 1; day <= dim; day++) {
     const iso = ym + '-' + String(day).padStart(2, '0');
     const s = byDay[iso];
+    // 通常は従来表記、ボーナス扱いは括弧付きで区別
     row += `<td class="${iso === today ? 'today' : ''} ${iso === state.calSel ? 'selday' : ''}" onclick="calSelect('${iso}')">
       <div class="d">${day}</div>
       ${s && s.exp ? `<div class="ce">-${s.exp.toLocaleString()}</div>` : ''}
+      ${s && s.bexp ? `<div class="ce">(-${s.bexp.toLocaleString()})</div>` : ''}
       ${s && s.inc ? `<div class="ci">+${s.inc.toLocaleString()}</div>` : ''}
+      ${s && s.binc ? `<div class="ci">(+${s.binc.toLocaleString()})</div>` : ''}
     </td>`;
     if ((startWd + day) % 7 === 0) { cells += row + '</tr>'; row = '<tr>'; }
   }
@@ -766,16 +765,7 @@ function renderCal(main) {
   </div>
   <div class="cal-scroll">
   <div class="card">
-    <div class="sumline">
-      <div><div class="lb">収入</div><div class="v amt-inc">${yen(msum.inc)}</div></div>
-      <div><div class="lb">支出</div><div class="v amt-exp">${yen(msum.exp)}</div></div>
-      <div><div class="lb">合計</div><div class="v num ${msum.net < 0 ? 'amt-exp' : ''}">${msum.net < 0 ? '-' : ''}${yen(Math.abs(msum.net))}</div></div>
-    </div>
-    ${splitTableHtml(entriesOfYm(ym))}
-    <div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)">
-      選択日: ${fmtIso(state.calSel)}
-      <button class="ghost" style="padding:4px 8px" onclick="inputAt('${state.calSel}')">＋ この日に入力</button>
-    </div>
+    ${twoRowSumHtml(entriesOfYm(ym))}
   </div>
   ${listHtml}</div>`;
 }
@@ -796,12 +786,9 @@ function calSelect(iso) {
 function inputAt(iso) { state.date = iso; state.tab = 'input'; state.editId = null; render(); toTop(); }
 
 /* ================= レポート ================= */
-function renderReport(main) {
-  const mode = state.repMode;
-  const kind = state.repKind;
-  const prefix = mode === 'month' ? state.repYm : state.repYear + '-';
-  const label = mode === 'month' ? ymLabel(state.repYm) : state.repYear + '年';
-  const entriesAll = store.entries.filter(e => e.date.startsWith(prefix));
+// レポート1ユニット（サマリ＋ドーナツ＋ランキング＋年間の月別内訳）を、
+// 渡された取引集合（通常のみ／ボーナスのみ）だけで組み立てる。合算はしない
+function reportUnitHtml(entriesAll, kind, mode) {
   const entries = entriesAll.filter(e => kindOf(e) === kind);
   const total = entries.reduce((a, e) => a + e.amount, 0);
 
@@ -820,6 +807,60 @@ function renderReport(main) {
   }
 
   const sums = sumBy(entriesAll);
+  let html = `<div class="repsum">
+      <div class="box"><span>支出</span><b class="amt-exp">-${yen(sums.exp)}</b></div>
+      <div class="box"><span>収入</span><b class="amt-inc">+${yen(sums.inc)}</b></div>
+      <div class="box net"><span>収支</span><b class="${sums.net < 0 ? 'amt-exp' : ''}">${sums.net < 0 ? '-' : ''}${yen(Math.abs(sums.net))}</b></div>
+    </div>`;
+
+  if (!total) {
+    html += `<div class="empty">この${mode === 'month' ? '月' : '年'}の${kind === 'exp' ? '支出' : '収入'}はありません</div>`;
+  } else {
+    html += `<div style="display:flex;justify-content:center;padding:6px 0">${donutSvg(slices, total, kind)}</div>` +
+      rows.map(r => `<div class="rep-row">
+        <span class="cdot" style="background:${r.cat.color}"></span>
+        <span>${esc(r.cat.name)}</span>
+        <span class="amt">${yen(r.amt)}</span>
+        <span class="pct">${(r.amt / total * 100).toFixed(1)}%</span>
+      </div>`).join('');
+  }
+
+  // 年間モード: 月別内訳（収入・支出・収支）
+  if (mode === 'year') {
+    const months = new Map();
+    for (const e of entriesAll) {
+      const mm = e.date.slice(5, 7);
+      if (!months.has(mm)) months.set(mm, { exp: 0, inc: 0 });
+      months.get(mm)[kindOf(e)] += e.amount;
+    }
+    const mRows = [...months.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const ySum = sumBy(entriesAll);
+    html += `<h2 style="margin:14px 4px 8px">月別内訳</h2>`;
+    if (!mRows.length) {
+      html += '<div class="empty">この年の記録はありません</div>';
+    } else {
+      html += `<div class="splitwrap"><table class="sum">
+        <thead><tr><th>月</th><th>収入</th><th>支出</th><th>収支</th></tr></thead>
+        <tbody>` + mRows.map(([mm, s]) => {
+          const net = s.inc - s.exp;
+          return `<tr><td>${Number(mm)}月</td><td>${yen(s.inc)}</td><td>${yen(s.exp)}</td><td>${net < 0 ? '-' : ''}${yen(Math.abs(net))}</td></tr>`;
+        }).join('') + `
+        <tr><td><b>合計</b></td><td><b>${yen(ySum.inc)}</b></td><td><b>${yen(ySum.exp)}</b></td><td><b>${ySum.net < 0 ? '-' : ''}${yen(Math.abs(ySum.net))}</b></td></tr>
+        </tbody></table></div>`;
+    }
+  }
+  return html;
+}
+function renderReport(main) {
+  const mode = state.repMode;
+  const kind = state.repKind;
+  const prefix = mode === 'month' ? state.repYm : state.repYear + '-';
+  const label = mode === 'month' ? ymLabel(state.repYm) : state.repYear + '年';
+  const entriesAll = store.entries.filter(e => e.date.startsWith(prefix));
+  const normalAll = entriesAll.filter(e => !e.isBonus);
+  const bonusAll = entriesAll.filter(e => e.isBonus);
+
+  // 共通操作（月間/年間・前後送り・支出/収入）を上部に置き、その下に通常・ボーナスの各レポートを縦に並べる
   let html = `<h1>レポート</h1>
   <div class="card">
     <div class="chips">
@@ -831,53 +872,17 @@ function renderReport(main) {
       <span class="ym">${label}</span>
       <button onclick="chRep(1)" aria-label="次へ">▶</button>
     </div>
-    <div class="repsum">
-      <div class="box"><span>支出</span><b class="amt-exp">-${yen(sums.exp)}</b></div>
-      <div class="box"><span>収入</span><b class="amt-inc">+${yen(sums.inc)}</b></div>
-      <div class="box net"><span>収支</span><b class="${sums.net < 0 ? 'amt-exp' : ''}">${sums.net < 0 ? '-' : ''}${yen(Math.abs(sums.net))}</b></div>
-    </div>
-    ${splitTableHtml(entriesAll)}
     <div class="kindtabs">
       <button class="${kind === 'exp' ? 'on-exp' : ''}" onclick="setRepKind('exp')">支出</button>
       <button class="${kind === 'inc' ? 'on-inc' : ''}" onclick="setRepKind('inc')">収入</button>
-    </div>`;
-
-  if (!total) {
-    html += `<div class="empty">この${mode === 'month' ? '月' : '年'}の${kind === 'exp' ? '支出' : '収入'}はありません</div></div>`;
-  } else {
-    html += `<div style="display:flex;justify-content:center;padding:6px 0">${donutSvg(slices, total, kind)}</div>` +
-      rows.map(r => `<div class="rep-row">
-        <span class="cdot" style="background:${r.cat.color}"></span>
-        <span>${esc(r.cat.name)}</span>
-        <span class="amt">${yen(r.amt)}</span>
-        <span class="pct">${(r.amt / total * 100).toFixed(1)}%</span>
-      </div>`).join('') + `</div>`;
-  }
-
-  // 年間モード: 月別内訳（収入・支出・収支）
-  if (mode === 'year') {
-    const months = new Map();
-    for (const e of entriesAll) {
-      const m = e.date.slice(5, 7);
-      if (!months.has(m)) months.set(m, { exp: 0, inc: 0 });
-      months.get(m)[kindOf(e)] += e.amount;
-    }
-    const mRows = [...months.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    const ySum = sumBy(entriesAll);
-    html += `<h2>月別内訳</h2><div class="card" style="overflow-x:auto">`;
-    if (!mRows.length) {
-      html += '<div class="empty">この年の記録はありません</div>';
-    } else {
-      html += `<table class="sum">
-        <thead><tr><th>月</th><th>収入</th><th>支出</th><th>収支</th></tr></thead>
-        <tbody>` + mRows.map(([m, s]) => {
-          const net = s.inc - s.exp;
-          return `<tr><td>${Number(m)}月</td><td>${yen(s.inc)}</td><td>${yen(s.exp)}</td><td>${net < 0 ? '-' : ''}${yen(Math.abs(net))}</td></tr>`;
-        }).join('') + `
-        <tr><td><b>合計</b></td><td><b>${yen(ySum.inc)}</b></td><td><b>${yen(ySum.exp)}</b></td><td><b>${ySum.net < 0 ? '-' : ''}${yen(Math.abs(ySum.net))}</b></td></tr>
-        </tbody></table>`;
-    }
-    html += `</div>`;
+    </div>
+  </div>
+  <h2 class="repblock-h">通常</h2>
+  <div class="card">${reportUnitHtml(normalAll, kind, mode)}</div>`;
+  // ボーナス取引が無い期間は下ブロックを出さない（空表示を避ける）
+  if (bonusAll.length) {
+    html += `<h2 class="repblock-h">ボーナス</h2>
+  <div class="card">${reportUnitHtml(bonusAll, kind, mode)}</div>`;
   }
 
   main.innerHTML = html;

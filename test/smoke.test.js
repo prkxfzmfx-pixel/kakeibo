@@ -42,7 +42,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
   get store() { return store; },
   state, go, render, setDate, setKind, selectCat, pad, padBack, saveEntry, openEntry, deleteEntry, cancelEdit,
   openPad, closePad, closePadSoft, decryptWithPin, applyPinToken,
-  calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind, setBonus, sumSplit, splitTableHtml,
+  calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind, setBonus, sumSplit, twoRowSumHtml,
   renameCat, reorderCats, addCat, addRec, toggleRec, delRec,
   openBudgetEdit, closeBudgetEdit, chBudEditYm, setBudDraftTotal, setBudDraftCat, saveBudgetEdit, budgetForYm,
   applyRecurring, buildCsv, catsOf, inputCatsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup,
@@ -360,8 +360,11 @@ assert(elements.main.innerHTML.includes('class="cal-scroll"'), '明細スクロ�
   const calHtml = elements.main.innerHTML;
   const fixedPart = calHtml.slice(0, calHtml.indexOf('cal-scroll'));
   assert(fixedPart.includes('<table class="cal">'), '固定部はカレンダーグリッドを含む');
-  assert(!fixedPart.includes('sumline'), '月間まとめ（収入/支出/合計）は固定部に含めない');
-  assert(calHtml.indexOf('sumline') > calHtml.indexOf('cal-scroll'), '月間まとめはスクロール側');
+  assert(!fixedPart.includes('splitsum'), '月まとめ（通常/ボーナス2行）は固定部に含めない');
+  assert(calHtml.indexOf('splitsum') > calHtml.indexOf('cal-scroll'), '月まとめはスクロール側');
+  // 「選択日サマリ」「この日に入力」導線は撤去済み（ダブルタップ入力に統一）
+  assert(!calHtml.includes('選択日'), '選択日サマリ行を撤去');
+  assert(!calHtml.includes('この日に入力'), 'この日に入力ボタンを撤去');
 }
 const selIso = ym + '-03';
 A.calSelect(selIso);
@@ -421,7 +424,7 @@ assert.strictEqual(mig.entries[0].isBonus, false, '旧取引はisBonus未設定�
 lsData['kakeibo.v1'] = savedAll;
 console.log('OK 旧形式データの移行');
 
-// 16c) ボーナス扱い: 入力・保存・集計（通常/ボーナス/合算）・明細バッジ・編集変更
+// 16c) ボーナス扱い: 入力・保存・通常/ボーナス別集計・括弧付きセル・レポート2ブロック・編集変更
 // この時点の店舗の当月データ: 給料280,000(通常収入)・住居費80,000(通常支出/固定費)
 A.go('input');
 // トグルスイッチのDOM構造（input隠し＋.toggle描画）とラベル文言
@@ -455,37 +458,48 @@ A.setKind('exp'); A.selectCat(food.id);
 A.saveEntry();
 const normalExp = A.store.entries.find(e => e.amount === 400);
 assert.strictEqual(normalExp.isBonus, false, 'チェックなしの入力はisBonus=false');
-// 集計の分離: 通常/ボーナス/合算
+// 集計の分離: 通常/ボーナス（合算は作らない）
 const sp = A.sumSplit(A.entriesOfYm(ym));
 assert.strictEqual(sp.normal.inc, 280000, '通常収入=給料280,000');
 assert.strictEqual(sp.bonus.inc, 100000, 'ボーナス収入=100,000');
-assert.strictEqual(sp.total.inc, 380000, '合算収入=380,000');
 assert.strictEqual(sp.normal.exp, 80400, '通常支出=住居費80,000+400');
 assert.strictEqual(sp.bonus.exp, 30000, 'ボーナス支出=30,000');
-assert.strictEqual(sp.total.exp, 110400, '合算支出=110,400');
 assert.strictEqual(sp.normal.net, 199600, '通常収支');
 assert.strictEqual(sp.bonus.net, 70000, 'ボーナス収支');
-assert.strictEqual(sp.total.net, 269600, '合算収支');
-console.log('OK ボーナス集計の分離（通常/ボーナス/合算）');
-// カレンダー: 内訳テーブル＋明細バッジ
+assert(!('total' in sp), '合算(total)は返さない');
+assert.strictEqual(A.twoRowSumHtml(A.entriesOfYm(ym)).match(/合算/g), null, '2行集計に合算行は無い');
+console.log('OK ボーナス集計の分離（通常/ボーナスの2系統）');
+// カレンダー: 月まとめ2行（通常/ボーナス、合算なし）＋日セルの括弧付き＋明細バッジ
 A.go('cal');
 {
   const h = elements.main.innerHTML;
-  assert(h.includes('class="splitsum"'), 'カレンダーに通常/ボーナス内訳テーブル');
-  assert(h.includes('内訳') && h.includes('通常') && h.includes('合算'), '内訳の見出し・行');
+  assert(h.includes('class="splitsum"'), 'カレンダー月まとめの2行テーブル');
+  assert(h.includes('通常') && h.includes('ボーナス'), '通常行・ボーナス行');
+  assert(!h.includes('合算'), '合算行は無い');
+  assert(h.includes('¥280,000') && h.includes('¥100,000'), '通常収入・ボーナス収入が別行に出る');
+  assert(h.includes('(+100,000)'), 'ボーナス収入は日セルに括弧付き(+)');
+  assert(h.includes('(-30,000)'), 'ボーナス支出は日セルに括弧付き(-)');
   assert(h.includes('bonus-badge'), '明細にボーナスバッジ');
-  assert(h.includes('¥380,000'), '合算収入がテーブルに出る');
 }
-// レポート（月間）: 内訳テーブル
+// レポート（月間）: 通常ブロックとボーナスブロックが上下に並ぶ（合算ユニットは無い）
 A.go('report');
 A.setRepMode('month');
-assert(elements.main.innerHTML.includes('class="splitsum"'), 'レポート月間に内訳テーブル');
-// レポート（年間）: 内訳テーブル
+{
+  const h = elements.main.innerHTML;
+  assert(h.includes('repblock-h">通常'), 'レポート月間に通常ブロック見出し');
+  assert(h.includes('repblock-h">ボーナス'), 'レポート月間にボーナスブロック見出し');
+  assert((h.match(/<svg/g) || []).length >= 2, '通常・ボーナスで円グラフが2つ');
+  assert(!h.includes('合算'), '合算ユニットは出さない');
+}
+// レポート（年間）: 各ブロックに月別内訳
 A.setRepMode('year');
-assert(elements.main.innerHTML.includes('class="splitsum"'), 'レポート年間に内訳テーブル');
+{
+  const h = elements.main.innerHTML;
+  assert(h.includes('repblock-h">通常') && h.includes('repblock-h">ボーナス'), '年間も2ブロック');
+  assert((h.match(/月別内訳/g) || []).length >= 2, '各ブロックに月別内訳');
+  assert((h.match(/<svg/g) || []).length >= 2, '年間も円グラフ2つ');
+}
 A.setRepMode('month');
-// ボーナスが無い期間は内訳を出さない（従来の見た目を崩さない）
-assert.strictEqual(A.splitTableHtml(A.entriesOfYm(A.shiftYm(ym, -24))), '', 'ボーナスの無い期間は内訳非表示');
 // 編集で既存取引のボーナス扱いを解除できる
 A.openEntry(bonusInc.id);
 assert.strictEqual(A.state.isBonus, true, '編集時にボーナス状態を復元');
@@ -495,7 +509,11 @@ assert.strictEqual(A.store.entries.find(e => e.id === bonusInc.id).isBonus, fals
 // 後始末: 追加した取引を除去して以降のテストへ影響させない
 A.store.entries = A.store.entries.filter(e => ![bonusInc.id, bonusExp.id, normalExp.id].includes(e.id));
 lsData['kakeibo.v1'] = JSON.stringify(A.store);
-console.log('OK ボーナス扱い（入力チェック・バッジ・レポート内訳・編集変更）');
+// ボーナス取引が無くなればレポート下ブロックは非表示（空表示を避ける）
+A.go('report'); A.setRepMode('month');
+assert(!elements.main.innerHTML.includes('ボーナス'), 'ボーナス取引0件なら下ブロック非表示');
+assert(elements.main.innerHTML.includes('repblock-h">通常'), '通常ブロックは常に表示');
+console.log('OK ボーナス扱い（2行集計・括弧付きセル・レポート2ブロック・編集変更）');
 
 // 17) クラウドバックアップ（fetchモック）
 (async () => {
