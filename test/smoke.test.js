@@ -46,7 +46,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
   calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind, setBonus, sumSplit, twoRowSumHtml,
   renameCat, reorderCats, addCat, addRec, toggleRec, delRec, normalize, cloudRestore,
   openBudgetEdit, closeBudgetEdit, chBudEditYm, setBudDraftTotal, setBudDraftCat, saveBudgetEdit, budgetForYm,
-  applyRecurring, buildCsv, catsOf, inputCatsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup,
+  applyRecurring, buildCsv, catsOf, inputCatsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup, save,
 };})()`;
 eval(bootstrap);
 const A = globalThis.__api;
@@ -570,35 +570,86 @@ console.log('OK カレンダー由来の編集は更新/取消後にカレンダ
 
 // 17) クラウドバックアップ（fetchモック）
 (async () => {
+  // 簡易クラウド: GET(JSON)は sha と base64本文、PUTは本文を保管
   const calls = [];
+  let cloud = null; // { text, sha }
   global.fetch = async (url, opts = {}) => {
-    calls.push({ url, method: opts.method || 'GET', body: opts.body });
-    if (!opts.method) return { status: 200, ok: true, json: async () => ({ sha: 'abc' }) };
-    return { ok: true, status: 200, json: async () => ({}) };
+    const method = opts.method || 'GET';
+    calls.push({ url, method, body: opts.body });
+    if (method === 'PUT') {
+      const b = JSON.parse(opts.body);
+      cloud = { text: Buffer.from(b.content, 'base64').toString('utf8'), sha: 'sha' + calls.length };
+      return { ok: true, status: 200, json: async () => ({}) };
+    }
+    if (!cloud) return { ok: false, status: 404, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ sha: cloud.sha, content: Buffer.from(cloud.text, 'utf8').toString('base64') }) };
   };
+  const puts = () => calls.filter(c => c.method === 'PUT').length;
   let r = await A.cloudBackup();
   assert.strictEqual(r.skipped, 'no-token', 'トークン未設定はスキップ');
   lsData['kakeibo.cloudToken'] = 'testtoken';
+  // クラウドにまだ無い → アップロード
   r = await A.cloudBackup();
-  assert(r.ok, 'バックアップ成功');
-  assert.strictEqual(calls.length, 2, 'GET(sha取得)+PUT');
-  assert(calls[1].url.includes('app-backups/contents/kakeibo.json'), 'アップロード先');
-  assert(JSON.parse(calls[1].body).sha === 'abc', '既存ファイルのshaを指定');
-  assert(JSON.parse(lsData['kakeibo.cloudMeta']).last, 'バックアップ日を記録');
+  assert(r.ok, '初回はアップロード');
+  assert.strictEqual(puts(), 1, 'PUT 1回');
+  assert(calls.find(c => c.method === 'PUT').url.includes('app-backups/contents/kakeibo.json'), 'アップロード先');
+  assert(JSON.parse(lsData['kakeibo.cloudMeta']).last, '同期日を記録');
+  // 同じ更新時刻なら何もしない
   r = await A.cloudBackup();
-  assert.strictEqual(r.skipped, 'up-to-date', '同日かつ内容不変ならスキップ');
-  r = await A.cloudBackup(true);
-  assert(r.ok, 'force指定は同日でも実行');
-  // 消失バグ修正の核心: 同日でも内容が変わったら再バックアップされる（当日中の編集がクラウドに残る）
-  const beforeCount = calls.length;
+  assert.strictEqual(r.skipped, 'up-to-date', '更新時刻が同じならスキップ');
+  assert.strictEqual(puts(), 1, 'スキップ時はPUTしない');
+  // 手元で人が編集（updatedAtが進む）→ アップロード。既存shaを指定し、本文にupdatedAtが入る
   A.store.entries.push({ id: 'chg1', date: today, catId: A.store.categories[0].id, amount: 1, memo: '変更', isBonus: true });
+  A.store.updatedAt = Date.now();
+  const shaBefore = cloud.sha;
   r = await A.cloudBackup();
-  assert(r.ok, '同日でも内容変更後は再バックアップされる');
-  assert(calls.length > beforeCount, '再バックアップでGET/PUTが発生');
+  assert(r.ok, '手元が新しければ再アップロード');
+  assert.strictEqual(JSON.parse(calls.filter(c => c.method === 'PUT').pop().body).sha, shaBefore, '既存ファイルのshaを指定');
+  assert.strictEqual(JSON.parse(cloud.text).updatedAt, A.store.updatedAt, 'クラウドにupdatedAtが保存される');
+  assert(JSON.parse(cloud.text).entries.some(e => e.id === 'chg1' && e.isBonus === true), '当日中の編集もクラウドに残る');
+  // 他端末（スマホ）でより新しく入力された → この端末（PC）は確認なしで自動取り込みし、上書きしない
+  const phone = JSON.parse(cloud.text);
+  phone.entries.push({ id: 'fromPhone', date: today, catId: A.store.categories[0].id, amount: 777, memo: 'スマホ入力', isBonus: false });
+  phone.updatedAt = A.store.updatedAt + 60000;
+  cloud = { text: JSON.stringify(phone), sha: 'phoneSha' };
+  const putsBefore = puts();
   r = await A.cloudBackup();
-  assert.strictEqual(r.skipped, 'up-to-date', '再度、内容不変ならスキップ');
-  A.store.entries = A.store.entries.filter(e => e.id !== 'chg1');
-  console.log('OK クラウドバックアップ（内容変化で同日再バックアップ・不変ならスキップ）');
+  assert(r.pulled, 'クラウドが新しければ取り込む');
+  assert(A.store.entries.some(e => e.id === 'fromPhone'), 'スマホの入力がPCに反映される');
+  assert.strictEqual(A.store.updatedAt, phone.updatedAt, '更新時刻もクラウドに揃う');
+  assert.strictEqual(puts(), putsBefore, '古い端末からはアップロードしない（上書き事故防止）');
+  assert(JSON.parse(lsData['kakeibo.v1']).entries.some(e => e.id === 'fromPhone'), '取り込んだデータを端末に保存');
+  // 固定費の自動記帳は更新時刻を進めない（古いデータの端末が自動記帳だけで最新扱いにならない）
+  const stampBefore = A.store.updatedAt;
+  A.store.recurring.push({ id: 'recStamp', catId: A.store.categories[0].id, amount: 5, memo: '', startDate: today, endDate: null, lastApplied: null });
+  delete lsData['kakeibo.cloudToken']; // save()の4秒後同期タイマーを後続テスト中に走らせない
+  assert.strictEqual(A.applyRecurring(), 1, '前提: 自動記帳が1件発生');
+  assert.strictEqual(A.store.updatedAt, stampBefore, '自動記帳ではupdatedAtが変わらない');
+  const tHuman = Date.now();
+  A.save();
+  assert(A.store.updatedAt >= tHuman, '人の操作による保存ではupdatedAtが進む');
+  A.store.updatedAt = stampBefore;
+  lsData['kakeibo.cloudToken'] = 'testtoken';
+  r = await A.cloudBackup();
+  assert.strictEqual(r.skipped, 'up-to-date', '自動記帳だけではアップロードしない');
+  A.store.recurring = A.store.recurring.filter(x => x.id !== 'recStamp');
+  A.store.entries = A.store.entries.filter(e => e.recId !== 'recStamp');
+  // 旧データ同士（どちらも更新時刻なし）で内容が違っても、どちらかを推測で上書きしない
+  const legacyCloud = JSON.parse(cloud.text); delete legacyCloud.updatedAt; legacyCloud.entries = [];
+  cloud = { text: JSON.stringify(legacyCloud), sha: 'legacy' };
+  const savedStamp = A.store.updatedAt; delete A.store.updatedAt;
+  const nEntries = A.store.entries.length, putsLegacy = puts();
+  r = await A.cloudBackup();
+  assert.strictEqual(r.skipped, 'up-to-date', '時刻なし同士は何もしない');
+  assert.strictEqual(A.store.entries.length, nEntries, '取り込みもしない');
+  assert.strictEqual(puts(), putsLegacy, 'アップロードもしない');
+  // 明示の「今すぐバックアップ」は比較せずアップロード
+  r = await A.cloudBackup(true);
+  assert(r.ok, 'force指定は常にアップロード');
+  assert.strictEqual(puts(), putsLegacy + 1, 'force時はPUT');
+  A.store.updatedAt = savedStamp;
+  A.store.entries = A.store.entries.filter(e => e.id !== 'chg1' && e.id !== 'fromPhone');
+  console.log('OK クラウド同期（新しい方を採用・PCは自動取り込み・古い端末は上書きしない・自動記帳は時刻不変）');
 
   // 18) かんたん設定コード（6桁→トークン復号）。実コード・実トークンは使わずテスト専用の暗号文で往復検証
   const enc = new TextEncoder();
