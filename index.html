@@ -292,6 +292,8 @@ table.cal td .ci { color: var(--inc); }
 .recrow .detail { flex: 1; min-width: 0; }
 .recrow .detail .sub { font-size: 12px; color: var(--muted); }
 .recrow.paused .detail { color: var(--muted); }
+.recperiod { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.recperiod input { min-width: 0; width: 132px; padding: 4px 6px; font-size: 13px; }
 .recbonus { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-2); margin-top: 2px; }
 /* レポートの株式・NISA（参考金額メモ） */
 .stocktotal { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 2px 8px; font-size: 14px; color: var(--ink-2); }
@@ -1190,11 +1192,15 @@ function renderSettings(main) {
     })()}` +
     (store.recurring.length ? store.recurring.map(r => {
       const c = catById(r.catId) || { name: '?', kind: 'exp', icon: '❓' };
-      const fmtD = d => { const [y, m, dd] = d.split('-').map(Number); return `${y}/${m}/${dd}`; };
       return `<div class="recrow ${r.paused ? 'paused' : ''}">
         <div class="detail">
           ${esc(r.memo || c.name)}　<b class="num amt-${c.kind}">${yen(r.amount)}</b>
-          <div class="sub">${esc(c.icon || '')}${esc(c.name)}　毎月${recDay(r)}日　${fmtD(r.startDate)}〜${r.endDate ? fmtD(r.endDate) : 'なし'}${r.paused ? '（停止中）' : ''}</div>
+          <div class="sub">${esc(c.icon || '')}${esc(c.name)}　毎月${recDay(r)}日${r.paused ? '（停止中）' : ''}</div>
+          <div class="recperiod">
+            <input type="date" value="${r.startDate}" onchange="setRecPeriod('${r.id}', this.value, '${r.endDate || ''}')" aria-label="開始日">
+            <span>〜</span>
+            <input type="date" value="${r.endDate || ''}" onchange="setRecPeriod('${r.id}', '${r.startDate}', this.value)" aria-label="終了日">
+          </div>
           <label class="recbonus"><input type="checkbox" ${r.isBonus ? 'checked' : ''} onchange="setRecBonus('${r.id}', this.checked)">ボーナス扱い</label>
         </div>
         <button onclick="toggleRec('${r.id}')">${r.paused ? '再開' : '停止'}</button>
@@ -1217,7 +1223,7 @@ function renderSettings(main) {
       <input type="text" id="recMemo" placeholder="タイトル（家賃 など）" style="flex:1">
       <button class="primary" onclick="addRec()">追加</button>
     </div>
-    <div class="hint">開始日を初回として毎月同じ日に、当日以降アプリを開いたときに自動で記帳されます。終了日は空欄で無期限。開始日が過去の場合は過去分もまとめて記帳。31日など存在しない日は月末扱い。</div>
+    <div class="hint">開始日を初回として毎月同じ日に、当日以降アプリを開いたときに自動で記帳されます。終了日は空欄で無期限。登録済みの項目も期間を変更できます。同じ名前で複数登録できるので、金額が変わるときは「今月までの終了日を入れた旧項目」と「来月からの新項目」に分けて登録してください。開始日が過去の場合は過去分もまとめて記帳。31日など存在しない日は月末扱い。</div>
   </div>
 
   <h2>クラウド自動バックアップ</h2>
@@ -1338,6 +1344,41 @@ function addRec() {
   if (endDate && endDate < startDate) { alert('終了日が開始日より前になっています'); return; }
   const isBonus = !!(document.getElementById('recBonus') || {}).checked;
   store.recurring.push({ id: newId('r'), catId, amount, memo, startDate, endDate, isBonus, lastApplied: null });
+  applyRecurring();
+  save(); render();
+}
+// 登録済み固定費の期間（開始日・終了日）を変更する。
+// 新しい期間の外になる記帳済み記録は、確認のうえ削除。開始日を前に広げた分は遡って記帳。
+// 終了日を延ばした分・日付が変わった先の月は applyRecurring が通常どおり記帳する
+function setRecPeriod(id, start, end) {
+  const r = store.recurring.find(x => x.id === id);
+  if (!r) return;
+  end = end || null;
+  if (!start) { alert('開始日を入力してください'); render(); return; }
+  if (end && end < start) { alert('終了日が開始日より前になっています'); render(); return; }
+  const outside = store.entries.filter(e => e.recId === id && (e.date < start || (end && e.date > end)));
+  if (outside.length && !confirm(`新しい期間の外になる記帳済みの記録が${outside.length}件あります。削除して期間を変更しますか？`)) { render(); return; }
+  const drop = new Set(outside.map(e => e.id));
+  store.entries = store.entries.filter(e => !drop.has(e.id));
+  const oldStart = r.startDate;
+  r.startDate = start;
+  r.endDate = end;
+  // 終了日を縮めた場合: 記帳済み位置（lastApplied）を新しい最終記帳月まで戻す（後で終了日を延ばしたとき再び記帳されるように）
+  if (end && r.lastApplied) {
+    let lastYm = end.slice(0, 7);
+    if (clampDateInYm(lastYm, recDay(r)) > end) lastYm = shiftYm(lastYm, -1);
+    if (r.lastApplied > lastYm) r.lastApplied = lastYm;
+  }
+  // 開始日を前倒しした場合: 記帳済み（lastAppliedあり）なら、旧開始日より前の未記帳月を埋める
+  if (r.lastApplied && start < oldStart && !r.paused) {
+    const today = todayIso();
+    for (let ym = start.slice(0, 7); ym <= oldStart.slice(0, 7); ym = shiftYm(ym, 1)) {
+      const date = clampDateInYm(ym, recDay(r));
+      if (date < start || date >= oldStart || date > today || (end && date > end)) continue;
+      if (store.entries.some(e => e.recId === id && e.date.startsWith(ym))) continue;
+      store.entries.push({ id: newId('n'), date, catId: r.catId, amount: r.amount, memo: r.memo || '', isBonus: !!r.isBonus, recId: r.id });
+    }
+  }
   applyRecurring();
   save(); render();
 }

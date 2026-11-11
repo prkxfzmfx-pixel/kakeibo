@@ -45,7 +45,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
   openPad, closePad, closePadSoft, decryptWithPin, applyPinToken,
   calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind, setBonus, sumSplit, twoRowSumHtml,
   renameCat, reorderCats, addCat, addRec, toggleRec, delRec, normalize, cloudRestore,
-  setRecBonus, addStock, setStock, delStock,
+  setRecBonus, addStock, setStock, delStock, setRecPeriod,
   openBudgetEdit, closeBudgetEdit, chBudEditYm, setBudDraftTotal, setBudDraftCat, saveBudgetEdit, budgetForYm,
   applyRecurring, buildCsv, catsOf, inputCatsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup, save,
 };})()`;
@@ -769,8 +769,54 @@ console.log('OK カレンダー由来の編集は更新/取消後にカレンダ
     assert(!elements.main.innerHTML.includes('株式・NISA'), 'カレンダーには出ない');
     const back = A.normalize(JSON.parse(JSON.stringify(A.store)));
     assert.strictEqual(back.stocks[0].amount, 500000, 'JSON往復でstocks保持');
-    A.store = savedStore;
     console.log('OK レポートの株式・NISA');
+
+    // 22) 登録済み固定費の期間変更・同名の複数登録（家賃15万→来月から12万）
+    A.store = A.normalize({ version: 1, categories: savedStore.categories, entries: [], budgets: {}, recurring: [] });
+    const rentC = A.catsOf('exp').find(c => c.name === '住居費');
+    const start3 = A.shiftYm(ym, -3) + '-01';
+    elements.recBonus.checked = false;
+    elements.recCat.value = rentC.id; elements.recAmount.value = '150000';
+    elements.recStart.value = start3; elements.recEnd.value = ''; elements.recMemo.value = '家賃';
+    A.addRec();
+    const oldR = A.store.recurring[0];
+    const cnt = () => A.store.entries.filter(e => e.recId === oldR.id).length;
+    assert.strictEqual(cnt(), 4, '3か月前〜今月の4件記帳');
+    A.go('settings');
+    assert(elements.main.innerHTML.includes(`setRecPeriod('${oldR.id}'`), '登録済み行に期間入力あり');
+    // 今月末で終了 → 記録は不変
+    const thisEnd = A.clampDateInYm(ym, 31);
+    A.setRecPeriod(oldR.id, oldR.startDate, thisEnd);
+    assert.strictEqual(oldR.endDate, thisEnd, '終了日を設定');
+    assert.strictEqual(cnt(), 4, '期間内の記録は残る');
+    // 同じ名前で来月からの12万を登録（未来なのでまだ記帳されない）
+    elements.recAmount.value = '120000'; elements.recStart.value = A.shiftYm(ym, 1) + '-01'; elements.recMemo.value = '家賃';
+    A.addRec();
+    assert.strictEqual(A.store.recurring.filter(x => x.memo === '家賃').length, 2, '同名で2件登録できる');
+    assert.strictEqual(A.store.entries.filter(e => e.amount === 120000).length, 0, '来月分はまだ記帳しない');
+    // 終了日を2か月前に縮める（確認OK）→ 期間外の2件を削除
+    global.confirm = () => true;
+    A.setRecPeriod(oldR.id, oldR.startDate, A.clampDateInYm(A.shiftYm(ym, -2), 31));
+    assert.strictEqual(cnt(), 2, '期間外の記帳済み記録を削除');
+    // 確認キャンセル → 変更しない
+    global.confirm = () => false;
+    A.setRecPeriod(oldR.id, A.shiftYm(ym, -2) + '-01', oldR.endDate);
+    assert.strictEqual(oldR.startDate, start3, 'キャンセル時は期間不変');
+    global.confirm = () => true;
+    // 終了日を無期限に戻す → 削除した月が再記帳される
+    A.setRecPeriod(oldR.id, oldR.startDate, '');
+    assert.strictEqual(oldR.endDate, null, '終了日を空欄で無期限');
+    assert.strictEqual(cnt(), 4, '延長した分を再記帳');
+    // 開始日を前倒し → 遡って記帳（重複なし）
+    A.setRecPeriod(oldR.id, A.shiftYm(ym, -5) + '-01', '');
+    assert.strictEqual(cnt(), 6, '前倒しした2か月分を記帳');
+    const yms = A.store.entries.filter(e => e.recId === oldR.id).map(e => e.date.slice(0, 7));
+    assert.strictEqual(new Set(yms).size, yms.length, '月の重複なし');
+    // 終了日<開始日は拒否
+    A.setRecPeriod(oldR.id, ym + '-10', ym + '-05');
+    assert.strictEqual(oldR.endDate, null, '不正な期間は拒否');
+    A.store = savedStore;
+    console.log('OK 登録済み固定費の期間変更・同名の複数登録');
   }
 
   console.log('\n=== 全項目 PASS ===');
