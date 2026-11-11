@@ -292,6 +292,11 @@ table.cal td .ci { color: var(--inc); }
 .recrow .detail { flex: 1; min-width: 0; }
 .recrow .detail .sub { font-size: 12px; color: var(--muted); }
 .recrow.paused .detail { color: var(--muted); }
+.recbonus { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+/* レポートの株式・NISA（参考金額メモ） */
+.stocktotal { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 2px 8px; font-size: 14px; color: var(--ink-2); }
+.stocktotal b { font-size: 20px; }
+.exrow input.stamt { width: 110px; text-align: right; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -343,6 +348,8 @@ function loadStore() {
 function normalize(s) {
   if (!s.budgets) s.budgets = {};
   if (!s.recurring) s.recurring = [];
+  // 株式・NISA（レポート専用の参考金額メモ。取引とは無関係）: 旧データには無いので空で補完
+  if (!Array.isArray(s.stocks)) s.stocks = [];
   if (!s.version) s.version = 1;
   // 予算: 旧形式（catId→金額の単一マップ）→ 新形式（'YYYY-MM'→{total,cats}の月別スナップショット）へ移行
   {
@@ -368,6 +375,8 @@ function normalize(s) {
   }
   // 固定費: 旧形式（day/endYm）→ 新形式（startDate/endDate）へ移行
   for (const r of s.recurring) {
+    // ボーナス扱いフラグを補完（旧データは false＝通常扱い）
+    if (typeof r.isBonus !== 'boolean') r.isBonus = false;
     if (!r.startDate) {
       const day = r.day || 1;
       const baseYm = r.lastApplied || todayIso().slice(0, 7);
@@ -483,7 +492,7 @@ function applyRecurring() {
       if (date < r.startDate) { ym = shiftYm(ym, 1); continue; }
       if (r.endDate && date > r.endDate) break;
       if (date > today) break;
-      store.entries.push({ id: newId('n'), date, catId: r.catId, amount: r.amount, memo: r.memo || '', recId: r.id });
+      store.entries.push({ id: newId('n'), date, catId: r.catId, amount: r.amount, memo: r.memo || '', isBonus: !!r.isBonus, recId: r.id });
       r.lastApplied = ym;
       ym = shiftYm(ym, 1);
       added++;
@@ -925,8 +934,48 @@ function renderReport(main) {
     html += `<h2 class="repblock-h">ボーナス</h2>
   <div class="card">${reportUnitHtml(bonusAll, kind, mode)}</div>`;
   }
+  html += stocksHtml();
 
   main.innerHTML = html;
+}
+// 株式・NISA: 名称と参考金額を1行ずつ書くだけのメモ。取引・期間（月/年）とは無関係で、合計だけを＋表示する
+function stocksTotal() { return store.stocks.reduce((a, s) => a + (Number(s.amount) || 0), 0); }
+function stocksHtml() {
+  const t = stocksTotal();
+  return `<h2 class="repblock-h">株式・NISA</h2>
+  <div class="card">
+    <div class="stocktotal"><span>合計</span><b class="num ${t < 0 ? 'amt-exp' : 'amt-inc'}">${t < 0 ? '-' : '+'}${yen(Math.abs(t))}</b></div>` +
+    store.stocks.map(s => `<div class="exrow">
+      <input type="text" class="nm" value="${esc(s.name)}" placeholder="名称" onchange="setStock('${s.id}', 'name', this.value)">
+      <input type="number" class="stamt" inputmode="numeric" value="${Number(s.amount) || 0}" onchange="setStock('${s.id}', 'amount', this.value)">
+      <button class="danger" onclick="delStock('${s.id}')">削除</button>
+    </div>`).join('') + `
+    <div class="addrow">
+      <input type="text" id="stockName" placeholder="名称（NISA つみたて など）" style="flex:1">
+      <input type="number" id="stockAmount" inputmode="numeric" placeholder="参考金額" style="width:110px">
+      <button class="primary" onclick="addStock()">追加</button>
+    </div>
+    <div class="hint">入力・カレンダーの記録とは関係ない参考メモです。月間/年間の切替にかかわらず同じ内容が表示されます。</div>
+  </div>`;
+}
+function addStock() {
+  const name = document.getElementById('stockName').value.trim();
+  const amount = Math.round(Number(document.getElementById('stockAmount').value));
+  if (!name || !isFinite(amount)) { alert('名称と金額を入力してください'); return; }
+  store.stocks.push({ id: newId('s'), name, amount });
+  save(); render();
+}
+function setStock(id, field, v) {
+  const s = store.stocks.find(x => x.id === id);
+  if (!s) return;
+  if (field === 'name') { const n = String(v).trim(); if (n) s.name = n; }
+  else { const a = Math.round(Number(v)); if (isFinite(a)) s.amount = a; }
+  save(); render();
+}
+function delStock(id) {
+  if (!confirm('この行を削除しますか？')) return;
+  store.stocks = store.stocks.filter(x => x.id !== id);
+  save(); render();
 }
 function chRep(n) {
   if (state.repMode === 'month') state.repYm = shiftYm(state.repYm, n);
@@ -1146,6 +1195,7 @@ function renderSettings(main) {
         <div class="detail">
           ${esc(r.memo || c.name)}　<b class="num amt-${c.kind}">${yen(r.amount)}</b>
           <div class="sub">${esc(c.icon || '')}${esc(c.name)}　毎月${recDay(r)}日　${fmtD(r.startDate)}〜${r.endDate ? fmtD(r.endDate) : 'なし'}${r.paused ? '（停止中）' : ''}</div>
+          <label class="recbonus"><input type="checkbox" ${r.isBonus ? 'checked' : ''} onchange="setRecBonus('${r.id}', this.checked)">ボーナス扱い</label>
         </div>
         <button onclick="toggleRec('${r.id}')">${r.paused ? '再開' : '停止'}</button>
         <button class="danger" onclick="delRec('${r.id}')">削除</button>
@@ -1161,6 +1211,7 @@ function renderSettings(main) {
     <div class="addrow" style="align-items:center">
       <label class="hint" style="margin:0">開始日 <input type="date" id="recStart" value="${todayIso()}"></label>
       <label class="hint" style="margin:0">終了日 <input type="date" id="recEnd"></label>
+      <label class="recbonus"><input type="checkbox" id="recBonus">ボーナス扱い</label>
     </div>
     <div class="addrow">
       <input type="text" id="recMemo" placeholder="タイトル（家賃 など）" style="flex:1">
@@ -1285,8 +1336,17 @@ function addRec() {
   if (!catId || !amount || amount <= 0) { alert('カテゴリと金額を入力してください'); return; }
   if (!startDate) { alert('開始日を入力してください'); return; }
   if (endDate && endDate < startDate) { alert('終了日が開始日より前になっています'); return; }
-  store.recurring.push({ id: newId('r'), catId, amount, memo, startDate, endDate, lastApplied: null });
+  const isBonus = !!(document.getElementById('recBonus') || {}).checked;
+  store.recurring.push({ id: newId('r'), catId, amount, memo, startDate, endDate, isBonus, lastApplied: null });
   applyRecurring();
+  save(); render();
+}
+// 固定費のボーナス扱いは項目ごとの固定設定。切り替えたら、その固定費で記帳済みの記録にも反映する
+function setRecBonus(id, v) {
+  const r = store.recurring.find(x => x.id === id);
+  if (!r) return;
+  r.isBonus = !!v;
+  for (const e of store.entries) if (e.recId === id) e.isBonus = r.isBonus;
   save(); render();
 }
 function toggleRec(id) { const r = store.recurring.find(x => x.id === id); r.paused = !r.paused; if (!r.paused) applyRecurring(); save(); render(); }

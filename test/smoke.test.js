@@ -45,6 +45,7 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
   openPad, closePad, closePadSoft, decryptWithPin, applyPinToken,
   calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind, setBonus, sumSplit, twoRowSumHtml,
   renameCat, reorderCats, addCat, addRec, toggleRec, delRec, normalize, cloudRestore,
+  setRecBonus, addStock, setStock, delStock,
   openBudgetEdit, closeBudgetEdit, chBudEditYm, setBudDraftTotal, setBudDraftCat, saveBudgetEdit, budgetForYm,
   applyRecurring, buildCsv, catsOf, inputCatsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup, save,
 };})()`;
@@ -716,6 +717,60 @@ console.log('OK カレンダー由来の編集は更新/取消後にカレンダ
     assert.strictEqual(A.store.entries.filter(e => e.isBonus === true).length, 1, 'クラウド復元でisBonus:true保持');
     A.store = savedStore;
     console.log('OK isBonus往復保持（normalize/JSON/クラウド backup+restore）');
+  }
+
+  // 20) 固定費のボーナス扱い（項目ごとの固定設定）
+  {
+    const nr = A.normalize({ version: 1, categories: [{ id: 'e0', name: '食費', kind: 'exp', color: '#111111' }],
+      entries: [], budgets: {}, recurring: [{ id: 'r0', catId: 'e0', amount: 1, startDate: '2026-01-01', endDate: null }] });
+    assert.strictEqual(nr.recurring[0].isBonus, false, '旧固定費はisBonus=false補完');
+    assert.deepStrictEqual(nr.stocks, [], '旧データはstocks=[]補完');
+    const savedStore = A.store;
+    A.store = A.normalize({ version: 1, categories: savedStore.categories, entries: [], budgets: {}, recurring: [] });
+    const sal = A.catsOf('inc').find(c => c.name === '給料');
+    elements.recCat.value = sal.id; elements.recAmount.value = '500000';
+    elements.recStart.value = ym + '-01'; elements.recEnd.value = ''; elements.recMemo.value = '賞与固定';
+    elements.recBonus = makeEl('recBonus'); elements.recBonus.checked = true;
+    A.addRec();
+    const r = A.store.recurring[0];
+    assert.strictEqual(r.isBonus, true, 'ボーナス扱いで固定収入を登録');
+    const ent = A.store.entries.filter(e => e.recId === r.id);
+    assert(ent.length >= 1 && ent.every(e => e.isBonus === true), '自動記帳された記録もボーナス扱い');
+    assert.strictEqual(A.sumSplit(A.entriesOfYm(ym)).bonus.inc, 500000, 'ボーナス集計に入る');
+    A.go('settings');
+    assert(elements.main.innerHTML.includes(`setRecBonus('${r.id}', this.checked)`), '設定タブの固定費行に切替あり');
+    A.setRecBonus(r.id, false);
+    assert.strictEqual(r.isBonus, false, '固定費のボーナス扱いを解除');
+    assert(A.store.entries.filter(e => e.recId === r.id).every(e => e.isBonus === false), '記帳済みの記録にも反映');
+    elements.recBonus.checked = false;
+    elements.recMemo.value = '通常固定'; A.addRec();
+    assert.strictEqual(A.store.recurring[1].isBonus, false, 'チェックなしは通常扱い');
+    console.log('OK 固定費・固定収入のボーナス扱い');
+
+    // 21) レポートの株式・NISA（取引と無関係の参考金額メモ。合計のみ＋表示）
+    const entriesBefore = A.store.entries.length;
+    elements.stockName = makeEl('stockName'); elements.stockAmount = makeEl('stockAmount');
+    elements.stockName.value = 'NISA つみたて'; elements.stockAmount.value = '1200000'; A.addStock();
+    elements.stockName.value = '特定口座'; elements.stockAmount.value = '300000'; A.addStock();
+    assert.strictEqual(A.store.stocks.length, 2, '株式行を追加');
+    assert.strictEqual(A.store.entries.length, entriesBefore, '取引には影響しない');
+    A.go('report');
+    let rh = elements.main.innerHTML;
+    assert(rh.includes('株式・NISA'), 'レポートに株式・NISA欄');
+    assert(rh.includes('+¥1,500,000'), '合計を＋表示');
+    A.setRepMode('year');
+    assert(elements.main.innerHTML.includes('+¥1,500,000'), '年間でも同じ合計');
+    A.setRepMode('month');
+    A.setStock(A.store.stocks[1].id, 'amount', '500000');
+    assert(elements.main.innerHTML.includes('+¥1,700,000'), '金額編集で合計更新');
+    A.delStock(A.store.stocks[0].id);
+    assert(elements.main.innerHTML.includes('+¥500,000'), '削除で合計更新');
+    A.go('input'); A.go('cal');
+    assert(!elements.main.innerHTML.includes('株式・NISA'), 'カレンダーには出ない');
+    const back = A.normalize(JSON.parse(JSON.stringify(A.store)));
+    assert.strictEqual(back.stocks[0].amount, 500000, 'JSON往復でstocks保持');
+    A.store = savedStore;
+    console.log('OK レポートの株式・NISA');
   }
 
   console.log('\n=== 全項目 PASS ===');
