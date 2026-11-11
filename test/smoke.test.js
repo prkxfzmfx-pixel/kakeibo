@@ -45,12 +45,15 @@ const bootstrap = `(function(){ 'use strict';\n` + appJs + `
   openPad, closePad, closePadSoft, decryptWithPin, applyPinToken,
   calSelect, chCalYm, chBudYm, chRep, setRepMode, setRepKind, setSetKind, setBonus, sumSplit, twoRowSumHtml,
   renameCat, reorderCats, addCat, addRec, toggleRec, delRec, normalize, cloudRestore,
-  setRecBonus, addStock, setStock, delStock, setRecPeriod,
+  addStock, setStock, delStock, openRecEdit, cancelRecEdit, setRecDraft, clearRecDraftEnd, saveRecEdit,
   openBudgetEdit, closeBudgetEdit, chBudEditYm, setBudDraftTotal, setBudDraftCat, saveBudgetEdit, budgetForYm,
   applyRecurring, buildCsv, catsOf, inputCatsOf, sumBy, entriesOfYm, shiftYm, clampDateInYm, todayIso, cloudBackup, save,
 };})()`;
 eval(bootstrap);
 const A = globalThis.__api;
+// 固定費の編集フォーム操作（開く→下書き変更→保存）
+function editRec(id, patch) { A.openRecEdit(id); for (const [k, v] of Object.entries(patch)) A.setRecDraft(k, v); A.saveRecEdit(); }
+function setRecPeriod(id, start, end) { editRec(id, { startDate: start, endDate: end }); }
 const today = A.todayIso();
 const ym = today.slice(0, 7);
 
@@ -429,7 +432,8 @@ const mig = A3.store;
 assert.strictEqual(mig.categories[0].icon, '🍽️', 'アイコン補完');
 assert.strictEqual(mig.recurring[0].startDate, '2026-06-28', 'day/lastApplied→startDate');
 assert.strictEqual(mig.recurring[0].endDate, '2027-01-28', 'endYm→endDate');
-assert(!('day' in mig.recurring[0]) && !('endYm' in mig.recurring[0]), '旧フィールド削除');
+assert(!('endYm' in mig.recurring[0]), '旧フィールド削除');
+assert.strictEqual(mig.recurring[0].day, 28, '旧dayは毎月の記帳日として引き継ぐ');
 assert(Object.keys(mig.budgets).every(k => /^\d{4}-\d{2}$/.test(k)), '予算キーが月形式へ移行');
 assert.strictEqual(A3.budgetForYm(A3.todayIso().slice(0, 7)).cats.e0, 12345, '旧予算額を引き継ぎ');
 assert.strictEqual(A3.budgetForYm('2020-01').cats.e0, 12345, '過去の月にも適用');
@@ -738,8 +742,8 @@ console.log('OK カレンダー由来の編集は更新/取消後にカレンダ
     assert(ent.length >= 1 && ent.every(e => e.isBonus === true), '自動記帳された記録もボーナス扱い');
     assert.strictEqual(A.sumSplit(A.entriesOfYm(ym)).bonus.inc, 500000, 'ボーナス集計に入る');
     A.go('settings');
-    assert(elements.main.innerHTML.includes(`setRecBonus('${r.id}', this.checked)`), '設定タブの固定費行に切替あり');
-    A.setRecBonus(r.id, false);
+    assert(elements.main.innerHTML.includes(`openRecEdit('${r.id}')`), '設定タブの固定費行に編集ボタンあり');
+    editRec(r.id, { isBonus: false });
     assert.strictEqual(r.isBonus, false, '固定費のボーナス扱いを解除');
     assert(A.store.entries.filter(e => e.recId === r.id).every(e => e.isBonus === false), '記帳済みの記録にも反映');
     elements.recBonus.checked = false;
@@ -783,10 +787,20 @@ console.log('OK カレンダー由来の編集は更新/取消後にカレンダ
     const cnt = () => A.store.entries.filter(e => e.recId === oldR.id).length;
     assert.strictEqual(cnt(), 4, '3か月前〜今月の4件記帳');
     A.go('settings');
-    assert(elements.main.innerHTML.includes(`setRecPeriod('${oldR.id}'`), '登録済み行に期間入力あり');
+    A.openRecEdit(oldR.id);
+    assert(elements.main.innerHTML.includes('saveRecEdit()'), '編集フォームに保存ボタン');
+    assert(elements.main.innerHTML.includes("setRecDraft('startDate'"), '編集フォームに開始日');
+    // 下書きの変更だけでは再描画しない（iOSの日付ピッカーが閉じる原因）・保存前は反映しない
+    elements.main.innerHTML = 'SENTINEL';
+    A.setRecDraft('endDate', ym + '-20');
+    assert.strictEqual(elements.main.innerHTML, 'SENTINEL', '下書き変更で再描画しない');
+    assert.strictEqual(oldR.endDate, null, '保存前は未反映');
+    A.cancelRecEdit();
+    assert.strictEqual(oldR.endDate, null, 'キャンセルで破棄');
+    assert.strictEqual(A.state.recEdit, null, 'キャンセルで編集終了');
     // 今月末で終了 → 記録は不変
     const thisEnd = A.clampDateInYm(ym, 31);
-    A.setRecPeriod(oldR.id, oldR.startDate, thisEnd);
+    setRecPeriod(oldR.id, oldR.startDate, thisEnd);
     assert.strictEqual(oldR.endDate, thisEnd, '終了日を設定');
     assert.strictEqual(cnt(), 4, '期間内の記録は残る');
     // 同じ名前で来月からの12万を登録（未来なのでまだ記帳されない）
@@ -796,27 +810,94 @@ console.log('OK カレンダー由来の編集は更新/取消後にカレンダ
     assert.strictEqual(A.store.entries.filter(e => e.amount === 120000).length, 0, '来月分はまだ記帳しない');
     // 終了日を2か月前に縮める（確認OK）→ 期間外の2件を削除
     global.confirm = () => true;
-    A.setRecPeriod(oldR.id, oldR.startDate, A.clampDateInYm(A.shiftYm(ym, -2), 31));
+    setRecPeriod(oldR.id, oldR.startDate, A.clampDateInYm(A.shiftYm(ym, -2), 31));
     assert.strictEqual(cnt(), 2, '期間外の記帳済み記録を削除');
-    // 確認キャンセル → 変更しない
+    // 確認キャンセル → 変更しない（編集フォームは開いたまま）
     global.confirm = () => false;
-    A.setRecPeriod(oldR.id, A.shiftYm(ym, -2) + '-01', oldR.endDate);
+    setRecPeriod(oldR.id, A.shiftYm(ym, -2) + '-01', oldR.endDate);
     assert.strictEqual(oldR.startDate, start3, 'キャンセル時は期間不変');
+    assert.strictEqual(A.state.recEdit, oldR.id, 'キャンセル時は編集フォームを維持');
+    A.cancelRecEdit();
     global.confirm = () => true;
-    // 終了日を無期限に戻す → 削除した月が再記帳される
-    A.setRecPeriod(oldR.id, oldR.startDate, '');
-    assert.strictEqual(oldR.endDate, null, '終了日を空欄で無期限');
+    // 終了日を無期限に戻す（「終了日なし」ボタン）→ 削除した月が再記帳される
+    A.openRecEdit(oldR.id); A.clearRecDraftEnd(); A.saveRecEdit();
+    assert.strictEqual(oldR.endDate, null, '終了日なしで無期限');
     assert.strictEqual(cnt(), 4, '延長した分を再記帳');
     // 開始日を前倒し → 遡って記帳（重複なし）
-    A.setRecPeriod(oldR.id, A.shiftYm(ym, -5) + '-01', '');
+    setRecPeriod(oldR.id, A.shiftYm(ym, -5) + '-01', '');
     assert.strictEqual(cnt(), 6, '前倒しした2か月分を記帳');
     const yms = A.store.entries.filter(e => e.recId === oldR.id).map(e => e.date.slice(0, 7));
     assert.strictEqual(new Set(yms).size, yms.length, '月の重複なし');
     // 終了日<開始日は拒否
-    A.setRecPeriod(oldR.id, ym + '-10', ym + '-05');
+    setRecPeriod(oldR.id, ym + '-10', ym + '-05');
     assert.strictEqual(oldR.endDate, null, '不正な期間は拒否');
+    A.cancelRecEdit();
+    // 金額・タイトル変更は今後の記帳から（記帳済みは不変）
+    editRec(oldR.id, { amount: '160000', memo: '家賃（改定）' });
+    assert.strictEqual(oldR.amount, 160000, '金額を変更');
+    assert.strictEqual(oldR.memo, '家賃（改定）', 'タイトルを変更');
+    assert(A.store.entries.filter(e => e.recId === oldR.id).every(e => e.amount === 150000), '記帳済みの金額は不変');
+    console.log('OK 登録済み固定費の編集（期間・金額・タイトル）・同名の複数登録');
+
+    // 23) 毎月の記帳日の指定（新規登録・編集）
+    A.store = A.normalize({ version: 1, categories: savedStore.categories, entries: [], budgets: {}, recurring: [] });
+    A.go('settings');
+    assert(elements.main.innerHTML.includes('id="recDayIn"'), '新規登録に毎月の日付欄');
+    elements.recDayIn = makeEl('recDayIn'); elements.recDayIn.value = '27';
+    elements.recAmount.value = '9800'; elements.recStart.value = A.shiftYm(ym, -2) + '-01'; elements.recEnd.value = ''; elements.recMemo.value = 'サブスク';
+    A.addRec();
+    const dr = A.store.recurring[0];
+    assert.strictEqual(dr.day, 27, '毎月27日で登録');
+    const drDates = A.store.entries.filter(e => e.recId === dr.id).map(e => e.date);
+    assert(drDates.length >= 2 && drDates.every(d => d.endsWith('-27')), '開始日ではなく指定日に記帳');
+    assert(A.store.recurring.length && elements.main.innerHTML.includes('毎月27日'), '一覧に指定日を表示');
+    // 編集で日付変更 → 記帳済みは不変、今後は新しい日
+    const drBefore = drDates.length;
+    editRec(dr.id, { day: '5' });
+    assert.strictEqual(dr.day, 5, '編集で毎月5日へ変更');
+    assert(A.store.entries.filter(e => e.recId === dr.id && e.date.endsWith('-27')).length === drBefore, '記帳済みの日付は不変');
+    const ymsD = A.store.entries.filter(e => e.recId === dr.id).map(e => e.date.slice(0, 7));
+    assert.strictEqual(new Set(ymsD).size, ymsD.length, '日付変更で同月二重記帳しない');
+    // 31日指定は月末クランプ
+    elements.recDayIn.value = '31'; elements.recStart.value = '2026-02-01'; elements.recMemo.value = '月末';
+    A.addRec();
+    const mr = A.store.recurring[1];
+    assert(A.store.entries.some(e => e.recId === mr.id && e.date === '2026-02-28'), '31日指定は2月なら28日');
+    // 旧データ（dayなし）は開始日の日で補完
+    const legacy = A.normalize({ version: 1, categories: [], entries: [], budgets: {}, recurring: [{ id: 'x', catId: 'c', amount: 1, startDate: '2026-03-14', endDate: null }] });
+    assert.strictEqual(legacy.recurring[0].day, 14, '旧データのdayは開始日の日');
+    elements.recDayIn.value = '';
+    console.log('OK 固定費の毎月の記帳日指定（新規・編集・月末クランプ・旧データ補完）');
+
+    // 24) 停止→再開で、停止中の過去月を遡って記帳しない
+    A.store = A.normalize({ version: 1, categories: savedStore.categories, entries: [], budgets: {}, recurring: [] });
+    elements.recAmount.value = '1000'; elements.recStart.value = A.shiftYm(ym, -1) + '-01'; elements.recMemo.value = '停止テスト';
+    A.addRec();
+    const pr = A.store.recurring[0];
+    assert.strictEqual(A.store.entries.length, 2, '先月・今月の2件');
+    A.toggleRec(pr.id);
+    pr.lastApplied = A.shiftYm(ym, -3); // 3か月前から停止していた状況を再現
+    A.store.entries = [];
+    A.toggleRec(pr.id);
+    const pDates = A.store.entries.map(e => e.date.slice(0, 7));
+    assert(!pDates.includes(A.shiftYm(ym, -1)), '停止中だった先月は記帳しない');
+    assert(pDates.includes(ym), '今月分は記帳');
+    console.log('OK 停止→再開で停止中の月を遡らない');
+
+    // 25) 入力タブの日付: 変更で再描画しない（ピッカーが閉じない）・リセットで今日に戻る
     A.store = savedStore;
-    console.log('OK 登録済み固定費の期間変更・同名の複数登録');
+    A.go('input');
+    elements.main.innerHTML = 'SENTINEL';
+    const dEl = { value: '2026-03-03' };
+    A.setDate('2026-03-03', dEl);
+    assert.strictEqual(A.state.date, '2026-03-03', '日付を反映');
+    assert.strictEqual(elements.main.innerHTML, 'SENTINEL', '日付変更で再描画しない');
+    dEl.value = '';
+    A.setDate('', dEl);
+    assert.strictEqual(A.state.date, today, 'リセットで今日に戻る');
+    assert.strictEqual(dEl.value, today, '表示も今日に戻る');
+    A.go('cal');
+    console.log('OK 入力タブの日付（再描画しない・リセット）');
   }
 
   console.log('\n=== 全項目 PASS ===');

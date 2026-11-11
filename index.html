@@ -292,8 +292,8 @@ table.cal td .ci { color: var(--inc); }
 .recrow .detail { flex: 1; min-width: 0; }
 .recrow .detail .sub { font-size: 12px; color: var(--muted); }
 .recrow.paused .detail { color: var(--muted); }
-.recperiod { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; color: var(--muted); }
-.recperiod input { min-width: 0; width: 132px; padding: 4px 6px; font-size: 13px; }
+.recedit { padding: 10px; margin: 6px 0; border: 1px solid var(--accent); border-radius: 10px; }
+.recrow button { padding: 6px 8px; font-size: 13px; flex-shrink: 0; }
 .recbonus { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-2); margin-top: 2px; }
 /* レポートの株式・NISA（参考金額メモ） */
 .stocktotal { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 2px 8px; font-size: 14px; color: var(--ink-2); }
@@ -384,9 +384,12 @@ function normalize(s) {
       const baseYm = r.lastApplied || todayIso().slice(0, 7);
       r.startDate = clampDateInYm(baseYm, day);
       r.endDate = r.endYm ? clampDateInYm(r.endYm, day) : null;
-      delete r.day;
       delete r.endYm;
     }
+    // 毎月の記帳日: 旧データ（day無し）は開始日の日で補完（従来の挙動と同じ）
+    const dn = Number(r.day);
+    if (!(Number.isInteger(dn) && dn >= 1 && dn <= 31)) r.day = Number(r.startDate.slice(8, 10));
+    else r.day = dn;
   }
   return s;
 }
@@ -482,7 +485,8 @@ function twoRowSumHtml(entries) {
 /* ================= 固定費・固定収入の自動記帳 ================= */
 // 開始日から毎月同じ日（月末クランプ）に、当日以降アプリを開いたときに記帳する。
 // lastApplied=null なら開始月から。終了日を過ぎたら記帳しない
-function recDay(r) { return Number(r.startDate.slice(8, 10)); }
+// 毎月の記帳日。r.day（1〜31）を優先し、旧データは開始日の日を使う
+function recDay(r) { return validDay(r.day) || Number(r.startDate.slice(8, 10)); }
 function applyRecurring() {
   const today = todayIso();
   let added = 0;
@@ -540,6 +544,8 @@ const state = {
   repMode: 'month',          // 'month' | 'year'
   repKind: 'exp',
   setKind: 'exp',        // 設定画面のカテゴリタブ
+  recEdit: null,         // 編集中の固定費id（null=編集なし）
+  recDraft: null,        // 固定費編集の下書き
 };
 
 /* ================= ナビ ================= */
@@ -565,6 +571,7 @@ function resetInput() {
 function go(tab) {
   if (state.tab === 'input' && tab !== 'input') resetInput();
   if (state.tab === 'budget' && tab !== 'budget') { state.budEdit = null; state.budDraft = null; state.budDirty = false; }
+  if (state.tab === 'settings' && tab !== 'settings') { state.recEdit = null; state.recDraft = null; }
   state.tab = tab; render(); toTop();
 }
 
@@ -602,7 +609,7 @@ function renderInput(main) {
   <div class="frow">
     <span class="flabel">日付</span>
     <button class="dnav" onclick="chDate(-1)" aria-label="前日">◀</button>
-    <input type="date" value="${state.date}" onfocus="closePadSoft()" onchange="setDate(this.value)">
+    <input type="date" value="${state.date}" onfocus="closePadSoft()" onchange="setDate(this.value, this)">
     <button class="dnav" onclick="chDate(1)" aria-label="翌日">▶</button>
   </div>
   <div class="frow">
@@ -655,7 +662,13 @@ function entryRowHtml(e) {
 }
 // ボーナス扱いのトグル。再描画するとテンキーが閉じるため、状態だけ更新（DOMのcheckedは反映済み）
 function setBonus(v) { state.isBonus = !!v; }
-function setDate(v) { if (v) { state.date = v; state.padOpen = false; render(); } }
+// 日付欄の変更。再描画しない（再描画するとiOSの日付ピッカーが選択途中で閉じる）。
+// ピッカーの「リセット」で空になったら今日に戻す（日付は必須のため。従来は無視されて表示と内部値がずれていた）
+function setDate(v, el) {
+  if (!v) { v = todayIso(); if (el) el.value = v; }
+  state.date = v;
+  closePadSoft();
+}
 function chDate(n) { state.date = shiftDate(state.date, n); state.padOpen = false; render(); }
 function setKind(k) { state.kind = k; state.selCat = null; state.padOpen = false; render(); }
 function selectCat(id) { state.selCat = id; state.padOpen = false; render(); }
@@ -1191,28 +1204,22 @@ function renderSettings(main) {
       </div>`;
     })()}` +
     (store.recurring.length ? store.recurring.map(r => {
+      if (state.recEdit === r.id && state.recDraft) return recEditHtml(r);
       const c = catById(r.catId) || { name: '?', kind: 'exp', icon: '❓' };
       return `<div class="recrow ${r.paused ? 'paused' : ''}">
         <div class="detail">
-          ${esc(r.memo || c.name)}　<b class="num amt-${c.kind}">${yen(r.amount)}</b>
-          <div class="sub">${esc(c.icon || '')}${esc(c.name)}　毎月${recDay(r)}日${r.paused ? '（停止中）' : ''}</div>
-          <div class="recperiod">
-            <input type="date" value="${r.startDate}" onchange="setRecPeriod('${r.id}', this.value, '${r.endDate || ''}')" aria-label="開始日">
-            <span>〜</span>
-            <input type="date" value="${r.endDate || ''}" onchange="setRecPeriod('${r.id}', '${r.startDate}', this.value)" aria-label="終了日">
-          </div>
-          <label class="recbonus"><input type="checkbox" ${r.isBonus ? 'checked' : ''} onchange="setRecBonus('${r.id}', this.checked)">ボーナス扱い</label>
+          ${esc(r.memo || c.name)}　<b class="num amt-${c.kind}">${yen(r.amount)}</b>${r.isBonus ? ' <span class="bonus-badge">ボーナス</span>' : ''}
+          <div class="sub">${esc(c.icon || '')}${esc(c.name)}　毎月${recDay(r)}日　${fmtSlash(r.startDate)}〜${r.endDate ? fmtSlash(r.endDate) : 'なし'}${r.paused ? '（停止中）' : ''}</div>
         </div>
+        <button onclick="openRecEdit('${r.id}')">編集</button>
         <button onclick="toggleRec('${r.id}')">${r.paused ? '再開' : '停止'}</button>
         <button class="danger" onclick="delRec('${r.id}')">削除</button>
       </div>`;
     }).join('') : '<div class="empty">未登録。家賃・サブスク・給料などを登録すると毎月自動で記録されます</div>') + `
     <div class="addrow">
-      <select id="recCat">` +
-        ['exp', 'inc'].map(kk => `<optgroup label="${kk === 'exp' ? '支出' : '収入'}">` +
-          catsOf(kk).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('') + '</optgroup>').join('') + `
-      </select>
+      <select id="recCat">${recCatOptions(null)}</select>
       <input type="number" id="recAmount" inputmode="numeric" placeholder="金額" style="width:90px">
+      <label class="hint" style="margin:0">毎月 <select id="recDayIn">${recDayOptions(Number(todayIso().slice(8, 10)))}</select></label>
     </div>
     <div class="addrow" style="align-items:center">
       <label class="hint" style="margin:0">開始日 <input type="date" id="recStart" value="${todayIso()}"></label>
@@ -1223,7 +1230,7 @@ function renderSettings(main) {
       <input type="text" id="recMemo" placeholder="タイトル（家賃 など）" style="flex:1">
       <button class="primary" onclick="addRec()">追加</button>
     </div>
-    <div class="hint">開始日を初回として毎月同じ日に、当日以降アプリを開いたときに自動で記帳されます。終了日は空欄で無期限。登録済みの項目も期間を変更できます。同じ名前で複数登録できるので、金額が変わるときは「今月までの終了日を入れた旧項目」と「来月からの新項目」に分けて登録してください。開始日が過去の場合は過去分もまとめて記帳。31日など存在しない日は月末扱い。</div>
+    <div class="hint">開始日以降の「毎月◯日」に、当日以降アプリを開いたときに自動で記帳されます。終了日は空欄で無期限。登録済みの項目は「編集」で金額・日・期間などを変更できます。同じ名前で複数登録できるので、金額が変わるときは「今月までの終了日を入れた旧項目」と「来月からの新項目」に分けて登録してください。開始日が過去の場合は過去分もまとめて記帳。31日など存在しない日は月末扱い。</div>
   </div>
 
   <h2>クラウド自動バックアップ</h2>
@@ -1342,27 +1349,97 @@ function addRec() {
   if (!catId || !amount || amount <= 0) { alert('カテゴリと金額を入力してください'); return; }
   if (!startDate) { alert('開始日を入力してください'); return; }
   if (endDate && endDate < startDate) { alert('終了日が開始日より前になっています'); return; }
+  const day = validDay(document.getElementById('recDayIn').value) || Number(startDate.slice(8, 10));
   const isBonus = !!(document.getElementById('recBonus') || {}).checked;
-  store.recurring.push({ id: newId('r'), catId, amount, memo, startDate, endDate, isBonus, lastApplied: null });
+  store.recurring.push({ id: newId('r'), catId, amount, memo, day, startDate, endDate, isBonus, lastApplied: null });
   applyRecurring();
   save(); render();
 }
-// 登録済み固定費の期間（開始日・終了日）を変更する。
-// 新しい期間の外になる記帳済み記録は、確認のうえ削除。開始日を前に広げた分は遡って記帳。
-// 終了日を延ばした分・日付が変わった先の月は applyRecurring が通常どおり記帳する
-function setRecPeriod(id, start, end) {
+function validDay(v) { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 31 ? n : 0; }
+function fmtSlash(d) { const [y, m, dd] = d.split('-').map(Number); return `${y}/${m}/${dd}`; }
+function recCatOptions(sel) {
+  return ['exp', 'inc'].map(kk => `<optgroup label="${kk === 'exp' ? '支出' : '収入'}">` +
+    catsOf(kk).map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('') + '</optgroup>').join('');
+}
+function recDayOptions(sel) {
+  let h = '';
+  for (let d = 1; d <= 31; d++) h += `<option value="${d}" ${d === sel ? 'selected' : ''}>${d}日</option>`;
+  return h;
+}
+/* ---- 登録済み固定費の編集（下書き方式） ----
+   入力欄は state.recDraft だけを更新し、再描画しない（iOSの日付ピッカーが選択途中で閉じる・
+   リセットが効かないのは、変更のたびに画面を作り直していたため）。「保存」で一括反映する */
+function openRecEdit(id) {
   const r = store.recurring.find(x => x.id === id);
   if (!r) return;
-  end = end || null;
-  if (!start) { alert('開始日を入力してください'); render(); return; }
-  if (end && end < start) { alert('終了日が開始日より前になっています'); render(); return; }
+  state.recEdit = id;
+  state.recDraft = { catId: r.catId, amount: String(r.amount), memo: r.memo || '', day: recDay(r),
+    startDate: r.startDate, endDate: r.endDate || '', isBonus: !!r.isBonus };
+  render();
+}
+function cancelRecEdit() { state.recEdit = null; state.recDraft = null; render(); }
+function setRecDraft(field, v) { if (state.recDraft) state.recDraft[field] = v; }
+function clearRecDraftEnd() {
+  if (!state.recDraft) return;
+  state.recDraft.endDate = '';
+  const el = document.getElementById('recEditEnd');
+  if (el) el.value = '';
+}
+function recEditHtml(r) {
+  const d = state.recDraft;
+  return `<div class="recedit">
+    <div class="addrow" style="margin-top:0">
+      <select onchange="setRecDraft('catId', this.value)">${recCatOptions(d.catId)}</select>
+      <input type="number" inputmode="numeric" value="${esc(d.amount)}" placeholder="金額" style="width:100px" onchange="setRecDraft('amount', this.value)">
+    </div>
+    <div class="addrow">
+      <input type="text" value="${esc(d.memo)}" placeholder="タイトル（家賃 など）" style="flex:1" onchange="setRecDraft('memo', this.value)">
+    </div>
+    <div class="addrow" style="align-items:center">
+      <label class="hint" style="margin:0">毎月 <select onchange="setRecDraft('day', this.value)">${recDayOptions(Number(d.day))}</select></label>
+      <label class="recbonus"><input type="checkbox" ${d.isBonus ? 'checked' : ''} onchange="setRecDraft('isBonus', this.checked)">ボーナス扱い</label>
+    </div>
+    <div class="addrow" style="align-items:center">
+      <label class="hint" style="margin:0">開始日 <input type="date" value="${d.startDate}" onchange="setRecDraft('startDate', this.value)"></label>
+      <label class="hint" style="margin:0">終了日 <input type="date" id="recEditEnd" value="${d.endDate}" onchange="setRecDraft('endDate', this.value)"></label>
+      <button class="ghost" onclick="clearRecDraftEnd()">終了日なし</button>
+    </div>
+    <div class="addrow" style="justify-content:flex-end">
+      <button onclick="cancelRecEdit()">キャンセル</button>
+      <button class="primary" onclick="saveRecEdit()">保存</button>
+    </div>
+    <div class="hint">金額・カテゴリ・タイトル・日付の変更は今後の記帳から反映（記帳済みの記録はそのまま）。ボーナス扱いは記帳済みの記録にも反映。期間外になる記帳済みの記録は確認のうえ削除します。</div>
+  </div>`;
+}
+// 下書きを登録済み固定費に反映する。
+// 新しい期間の外になる記帳済み記録は、確認のうえ削除。開始日を前に広げた分は遡って記帳。
+// 終了日を延ばした分・引き落とし日を変えた後の月は applyRecurring が通常どおり記帳する
+function saveRecEdit() {
+  const id = state.recEdit;
+  const r = store.recurring.find(x => x.id === id);
+  const d = state.recDraft;
+  if (!r || !d) return;
+  const amount = Math.round(Number(d.amount));
+  const start = d.startDate;
+  const end = d.endDate || null;
+  const day = validDay(d.day);
+  if (!catById(d.catId) || !amount || amount <= 0) { alert('カテゴリと金額を入力してください'); return; }
+  if (!day) { alert('毎月の日付を選んでください'); return; }
+  if (!start) { alert('開始日を入力してください'); return; }
+  if (end && end < start) { alert('終了日が開始日より前になっています'); return; }
   const outside = store.entries.filter(e => e.recId === id && (e.date < start || (end && e.date > end)));
-  if (outside.length && !confirm(`新しい期間の外になる記帳済みの記録が${outside.length}件あります。削除して期間を変更しますか？`)) { render(); return; }
+  if (outside.length && !confirm(`新しい期間の外になる記帳済みの記録が${outside.length}件あります。削除して保存しますか？`)) return;
   const drop = new Set(outside.map(e => e.id));
   store.entries = store.entries.filter(e => !drop.has(e.id));
   const oldStart = r.startDate;
+  r.catId = d.catId; r.amount = amount; r.memo = String(d.memo || '').trim(); r.day = day;
+  if (r.isBonus !== !!d.isBonus) {
+    r.isBonus = !!d.isBonus;
+    for (const e of store.entries) if (e.recId === id) e.isBonus = r.isBonus;
+  }
   r.startDate = start;
   r.endDate = end;
+  state.recEdit = null; state.recDraft = null;
   // 終了日を縮めた場合: 記帳済み位置（lastApplied）を新しい最終記帳月まで戻す（後で終了日を延ばしたとき再び記帳されるように）
   if (end && r.lastApplied) {
     let lastYm = end.slice(0, 7);
@@ -1382,18 +1459,23 @@ function setRecPeriod(id, start, end) {
   applyRecurring();
   save(); render();
 }
-// 固定費のボーナス扱いは項目ごとの固定設定。切り替えたら、その固定費で記帳済みの記録にも反映する
-function setRecBonus(id, v) {
+// 停止/再開。再開時は停止していた過去の月を遡って記帳しない（「停止」の意味どおり）。
+// 前月までを記帳済み扱いにし、今月分は日付が来ていれば記帳する
+function toggleRec(id) {
   const r = store.recurring.find(x => x.id === id);
   if (!r) return;
-  r.isBonus = !!v;
-  for (const e of store.entries) if (e.recId === id) e.isBonus = r.isBonus;
+  r.paused = !r.paused;
+  if (!r.paused) {
+    const prevYm = shiftYm(todayIso().slice(0, 7), -1);
+    if (r.lastApplied ? r.lastApplied < prevYm : r.startDate.slice(0, 7) <= prevYm) r.lastApplied = prevYm;
+    applyRecurring();
+  }
   save(); render();
 }
-function toggleRec(id) { const r = store.recurring.find(x => x.id === id); r.paused = !r.paused; if (!r.paused) applyRecurring(); save(); render(); }
 function delRec(id) {
   if (!confirm('この固定記帳を削除しますか？（過去に記帳済みの記録は残ります）')) return;
   store.recurring = store.recurring.filter(x => x.id !== id);
+  if (state.recEdit === id) { state.recEdit = null; state.recDraft = null; }
   save(); render();
 }
 
