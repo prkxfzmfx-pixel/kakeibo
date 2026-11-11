@@ -109,6 +109,7 @@ A.calSelect(today); // スクロール呼び出しがエラーにならないこ
 console.log('OK カレンダー下部の明細・日付タップ');
 
 // 7) レポート: サマリカード+ドーナツ+割合
+assert.strictEqual(A.state.repMode, 'year', 'レポートの初期値は年間');
 A.go('report');
 assert(elements.main.innerHTML.includes('<svg'), 'ドーナツSVG');
 assert(elements.main.innerHTML.includes('100.0%'), '食費100%');
@@ -528,7 +529,7 @@ A.store.entries = A.store.entries.filter(e => ![bonusInc.id, bonusExp.id, normal
 lsData['kakeibo.v1'] = JSON.stringify(A.store);
 // ボーナス取引が無くなればレポート下ブロックは非表示（空表示を避ける）
 A.go('report'); A.setRepMode('month');
-assert(!elements.main.innerHTML.includes('ボーナス'), 'ボーナス取引0件なら下ブロック非表示');
+assert(!elements.main.innerHTML.includes('repblock-h">ボーナス'), 'ボーナス取引0件なら下ブロック非表示');
 assert(elements.main.innerHTML.includes('repblock-h">通常'), '通常ブロックは常に表示');
 console.log('OK ボーナス扱い（2行集計・括弧付きセル・レポート2ブロック・編集変更）');
 
@@ -898,6 +899,32 @@ console.log('OK カレンダー由来の編集は更新/取消後にカレンダ
     assert.strictEqual(dEl.value, today, '表示も今日に戻る');
     A.go('cal');
     console.log('OK 入力タブの日付（再描画しない・リセット）');
+
+    // 26) レポート: 年間が左・初期値／合計ブロック（通常＋ボーナス＋株式・NISA）が通常の上
+    {
+      const savedS = A.store;
+      const cats = savedS.categories;
+      const foodC = cats.find(c => c.name === '食費'), salC = cats.find(c => c.name === '給料');
+      A.store = A.normalize({ version: 1, categories: cats, budgets: {}, recurring: [],
+        entries: [
+          { id: 't1', date: ym + '-02', catId: salC.id, amount: 300000 },
+          { id: 't2', date: ym + '-03', catId: foodC.id, amount: 50000 },
+          { id: 't3', date: ym + '-04', catId: salC.id, amount: 200000, isBonus: true },
+          { id: 't4', date: ym + '-05', catId: foodC.id, amount: 30000, isBonus: true },
+        ],
+        stocks: [{ id: 's1', name: 'NISA', amount: 1000000 }] });
+      A.go('report');
+      const h = elements.main.innerHTML;
+      assert(h.indexOf('年間レポート') < h.indexOf('月間レポート'), '年間レポートが左');
+      assert(h.indexOf('>合計</h2>') >= 0 && h.indexOf('>合計</h2>') < h.indexOf('>通常</h2>'), '合計ブロックが通常の上');
+      // 250,000 + 170,000 + 1,000,000
+      assert(h.includes('+¥1,420,000'), '合計＝通常収支＋ボーナス収支＋株式');
+      assert(h.includes('+¥250,000') && h.includes('+¥170,000'), '内訳（通常・ボーナス収支）');
+      A.setRepMode('month');
+      assert(elements.main.innerHTML.includes('+¥1,420,000'), '月間でも合計表示');
+      A.store = savedS;
+    }
+    console.log('OK レポートの年間初期値・合計ブロック');
   }
 
   console.log('\n=== 全項目 PASS ===');

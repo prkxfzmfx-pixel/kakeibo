@@ -541,7 +541,7 @@ const state = {
   budDirty: false,       // 予算下書きに未保存の変更があるか
   repYm: todayIso().slice(0, 7),
   repYear: Number(todayIso().slice(0, 4)),
-  repMode: 'month',          // 'month' | 'year'
+  repMode: 'year',           // 'month' | 'year'（初期値は年間）
   repKind: 'exp',
   setKind: 'exp',        // 設定画面のカテゴリタブ
   recEdit: null,         // 編集中の固定費id（null=編集なし）
@@ -929,8 +929,8 @@ function renderReport(main) {
   let html = `<h1>レポート</h1>
   <div class="card">
     <div class="chips">
-      <button class="${mode === 'month' ? 'on' : ''}" onclick="setRepMode('month')">月間レポート</button>
       <button class="${mode === 'year' ? 'on' : ''}" onclick="setRepMode('year')">年間レポート</button>
+      <button class="${mode === 'month' ? 'on' : ''}" onclick="setRepMode('month')">月間レポート</button>
     </div>
     <div class="cal-head">
       <button onclick="chRep(-1)" aria-label="前へ">◀</button>
@@ -942,6 +942,7 @@ function renderReport(main) {
       <button class="${kind === 'inc' ? 'on-inc' : ''}" onclick="setRepKind('inc')">収入</button>
     </div>
   </div>
+  ${grandTotalHtml(normalAll, bonusAll)}
   <h2 class="repblock-h">通常</h2>
   <div class="card">${reportUnitHtml(normalAll, kind, mode)}</div>`;
   // ボーナス取引が無い期間は下ブロックを出さない（空表示を避ける）
@@ -952,6 +953,18 @@ function renderReport(main) {
   html += stocksHtml();
 
   main.innerHTML = html;
+}
+// 合計: 通常の収支＋ボーナスの収支＋株式・NISAの合計。通常・ボーナスは表示中の期間、株式・NISAは期間に関係なく同じ値
+function grandTotalHtml(normalAll, bonusAll) {
+  const n = sumBy(normalAll).net, b = sumBy(bonusAll).net, s = stocksTotal();
+  const t = n + b + s;
+  const sy = v => `${v < 0 ? '-' : '+'}${yen(Math.abs(v))}`;
+  const row = (label, v) => `<div class="rep-row"><span>${label}</span><span class="amt ${v < 0 ? 'amt-exp' : 'amt-inc'}">${sy(v)}</span></div>`;
+  return `<h2 class="repblock-h">合計</h2>
+  <div class="card">
+    <div class="stocktotal"><span>合計</span><b class="num ${t < 0 ? 'amt-exp' : 'amt-inc'}">${sy(t)}</b></div>
+    ${row('通常（収支）', n)}${row('ボーナス（収支）', b)}${row('株式・NISA', s)}
+  </div>`;
 }
 // 株式・NISA: 名称と参考金額を1行ずつ書くだけのメモ。取引・期間（月/年）とは無関係で、合計だけを＋表示する
 function stocksTotal() { return store.stocks.reduce((a, s) => a + (Number(s.amount) || 0), 0); }
